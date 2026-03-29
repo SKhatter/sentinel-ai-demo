@@ -293,7 +293,7 @@ except sentinel.ContractViolationError as e:
 
 ## Full API reference
 
-See the complete API manual at **https://www.agentsentinelai.com** (click "View API Manual").
+See the complete API manual at **https://github.com/SKhatter/sentinel-ai/blob/main/MANUAL.md**.
 
 ---
 
