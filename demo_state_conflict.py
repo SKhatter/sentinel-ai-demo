@@ -84,6 +84,6 @@ def run(api_key: str, endpoint: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Demo: concurrent state conflict + safe merge")
     parser.add_argument("--api-key",  required=True)
-    parser.add_argument("--endpoint", default="https://agentsentinelai.com")
+    parser.add_argument("--endpoint", default="https://www.agentsentinelai.com")
     args = parser.parse_args()
     run(args.api_key, args.endpoint)

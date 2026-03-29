@@ -1,6 +1,6 @@
 # Sentinel.AI — Demo: Customer Outreach Pipeline
 
-This repository simulates an **external customer** using [Sentinel.AI](https://agentsentinelai.com) to observe, coordinate, and protect a 3-agent AI workflow.
+This repository simulates an **external customer** using [Sentinel.AI](https://www.agentsentinelai.com) to observe, coordinate, and protect a 3-agent AI workflow.
 
 No prior knowledge of Sentinel's internals is needed — you only use the public API and the single-file SDK.
 
@@ -47,7 +47,7 @@ All agent activity, state changes, and handoffs flow through Sentinel and appear
 ## Step 1 — Get an API key
 
 ```bash
-curl -X POST https://agentsentinelai.com/api/keys \
+curl -X POST https://www.agentsentinelai.com/api/keys \
   -H "Content-Type: application/json" \
   -d '{"name": "my-outreach-demo"}'
 ```
@@ -59,7 +59,7 @@ Response:
 
 Save the key. It is only shown once.
 
-Alternatively, generate a key from the dashboard at https://agentsentinelai.com/dashboard (Settings tab → API Keys).
+Alternatively, generate a key from the dashboard at https://www.agentsentinelai.com/dashboard (Settings tab → API Keys).
 
 ---
 
@@ -128,14 +128,14 @@ Handing off email draft to deliver-agent...
 
 Pipeline complete in 623ms
   run_id  : demo_a3f9c12b8d1e
-  View at : https://agentsentinelai.com/dashboard
+  View at : https://www.agentsentinelai.com/dashboard
 ```
 
 ---
 
 ## Step 4 — Open the dashboard
 
-Go to **https://agentsentinelai.com/dashboard**
+Go to **https://www.agentsentinelai.com/dashboard**
 
 Enter your API key in the Settings tab to enable authenticated views.
 
@@ -240,7 +240,7 @@ sentinel-ai-demo/
 ### Initialize
 ```python
 import sentinel
-sentinel.init(api_key="sk_live_...", endpoint="https://agentsentinelai.com")
+sentinel.init(api_key="sk_live_...", endpoint="https://www.agentsentinelai.com")
 ```
 
 ### Trace a workflow
@@ -293,9 +293,9 @@ except sentinel.ContractViolationError as e:
 
 ## Full API reference
 
-See the complete API manual at **https://agentsentinelai.com** (click "View API Manual").
+See the complete API manual at **https://www.agentsentinelai.com** (click "View API Manual").
 
 ---
 
 *Sentinel.AI — The Control Plane for AI Agents*
-*https://agentsentinelai.com*
+*https://www.agentsentinelai.com*

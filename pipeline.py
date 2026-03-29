@@ -137,7 +137,7 @@ def run_pipeline(run_id: str):
     total_ms = int((time.time() - t0) * 1000)
     print(f"Pipeline complete in {total_ms}ms")
     print(f"  run_id  : {run_id}")
-    print(f"  View at : https://agentsentinelai.com/dashboard\n")
+    print(f"  View at : https://www.agentsentinelai.com/dashboard\n")
 
     return result
 
@@ -147,8 +147,8 @@ def run_pipeline(run_id: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sentinel.AI demo pipeline")
     parser.add_argument("--api-key",  required=True,  help="Your Sentinel API key (sk_live_...)")
-    parser.add_argument("--endpoint", default="https://agentsentinelai.com",
-                        help="Sentinel endpoint (default: https://agentsentinelai.com)")
+    parser.add_argument("--endpoint", default="https://www.agentsentinelai.com",
+                        help="Sentinel endpoint (default: https://www.agentsentinelai.com)")
     parser.add_argument("--run-id",   default=None,    help="Optional stable run ID")
     args = parser.parse_args()
 
