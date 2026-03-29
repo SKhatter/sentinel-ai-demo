@@ -71,7 +71,7 @@ The SDK is a single Python file. No pip install needed.
 curl -O https://raw.githubusercontent.com/SKhatter/sentinel-ai/main/sentinel_sdk.py
 ```
 
-Or just use the `sentinel_sdk.py` already in this repository.
+Or just use the `sentinel.py` already in this repository.
 
 ---
 
@@ -222,7 +222,7 @@ Open the **State** tab in the dashboard — the key shows version 2, containing 
 
 ```
 sentinel-ai-demo/
-├── sentinel_sdk.py          # Sentinel Python SDK (single file, no install)
+├── sentinel.py              # Sentinel Python SDK (single file, no install)
 ├── pipeline.py              # Main 3-agent pipeline
 ├── demo_bad_handoff.py      # Demo: contract violation blocks bad payload
 ├── demo_state_conflict.py   # Demo: concurrent agents, atomic state merge
