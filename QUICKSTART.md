@@ -37,7 +37,7 @@ Choose whichever requires the fewest changes to your existing code.
 
 ### Option A — Decorator (1 line per function)
 
-Best for standalone agent functions.
+Best for standalone agent functions. → [full example](examples/01_decorator.py)
 
 ```python
 import sentinel
@@ -52,7 +52,7 @@ def research_agent(query: str) -> dict:
 
 ### Option B — OpenAI auto-patch (2 lines total)
 
-Best for teams using the OpenAI Python SDK. Every `chat.completions.create()` call is traced automatically.
+Best for teams using the OpenAI Python SDK. Every `chat.completions.create()` call is traced automatically. → [full example](examples/02_openai_autopatch.py)
 
 ```python
 import openai, sentinel
@@ -70,7 +70,7 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 
 ### Option C — Anthropic auto-patch (2 lines total)
 
-Best for teams using the Anthropic / Claude SDK.
+Best for teams using the Anthropic / Claude SDK. → [full example](examples/03_anthropic_autopatch.py)
 
 ```python
 import anthropic, sentinel
@@ -88,7 +88,7 @@ response = client.messages.create(model="claude-opus-4-6", ...)
 
 ### Option D — LangChain callback (1 line total)
 
-Best for LangChain / LangGraph users. Every LLM call, chain step, and tool use is traced automatically.
+Best for LangChain / LangGraph users. Every LLM call, chain step, and tool use is traced automatically. → [full example](examples/04_langchain_callback.py)
 
 ```python
 import sentinel
@@ -107,7 +107,7 @@ cb.finish()
 
 ### Option E — Wrap existing code (5–15 lines total)
 
-Best for any existing pipeline where you want full control.
+Best for any existing pipeline where you want full control. → [full example](examples/05_existing_code_minimal.py)
 
 ```python
 import sentinel
