@@ -40,6 +40,31 @@ All agent activity, state changes, and handoffs flow through Sentinel and appear
 ## Prerequisites
 
 - Python 3.8+
+- Node.js 18+ (only if running the server locally)
+
+---
+
+## Option: Run the server locally
+
+You can run the full Sentinel server on your own machine instead of using the hosted dashboard.
+
+```bash
+git clone https://github.com/SKhatter/sentinel-ai.git
+cd sentinel-ai
+npm install
+node server.js
+```
+
+Then open **http://localhost:3001** in your browser.
+
+When running examples against the local server, add `--endpoint http://localhost:3001`:
+
+```bash
+python pipeline.py --api-key sk_live_... --endpoint http://localhost:3001
+python examples/06_v1_trip_planner.py --api-key sk_live_... --endpoint http://localhost:3001
+```
+
+> **Note:** The local server uses in-memory storage — data resets on restart. The hosted dashboard at [agentsentinelai.com](https://www.agentsentinelai.com/dashboard) persists data across sessions.
 
 ---
 
