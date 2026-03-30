@@ -23,6 +23,13 @@ output in the dashboard — use whichever requires the fewest changes to your co
 pip install sentinelai-sdk
 ```
 
+## Get an API key
+
+1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
+2. Click the **⚙️ gear icon** → enter a key name → **Generate Key**
+3. Copy the `sk_live_...` key — shown only once
+4. Paste it back into Settings → **Save Key** to scope the dashboard to your data
+
 ---
 
 ## 01 — Decorator

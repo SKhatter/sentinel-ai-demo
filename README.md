@@ -55,9 +55,15 @@ The `sentinel.py` file in this repo is also bundled for reference, but the pip p
 
 ## Step 2 — Get an API key
 
-Go to **https://www.agentsentinelai.com/dashboard** → click the ⚙️ gear icon → **Generate Key**.
+1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
+2. Click the **⚙️ gear icon** in the top-right corner of the header
+3. In the Settings panel, enter a name for your key (e.g. `my-pipeline`)
+4. Click **Generate Key**
+5. Copy the key — it starts with `sk_live_...` and is only shown once
 
-Save the key — it starts with `sk_live_...`.
+Then paste it into the same Settings panel under **"Your API Key"** and click **Save Key** — this scopes the dashboard to show only your data.
+
+> **Note:** The key is free. No credit card required.
 
 ---
 
