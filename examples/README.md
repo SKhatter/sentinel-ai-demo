@@ -1,7 +1,8 @@
 # Sentinel.AI — Integration Examples
 
-Pick the pattern that fits your existing code. All patterns produce identical
-output in the dashboard — use whichever requires the fewest changes to your codebase.
+Five patterns for connecting Sentinel to your existing code. All produce identical output in the dashboard — pick whichever requires the fewest changes to your codebase.
+
+> New here? Start with the [Quickstart guide](../QUICKSTART.md) first.
 
 ---
 
@@ -14,28 +15,6 @@ output in the dashboard — use whichever requires the fewest changes to your co
 | [03 — Anthropic auto-patch](#03-anthropic-auto-patch) | 2 lines total | Teams using Anthropic/Claude SDK |
 | [04 — LangChain callback](#04-langchain-callback) | 1 line total | LangChain / LangGraph users |
 | [05 — Wrap existing code](#05-wrap-existing-code) | 5–15 lines total | Any existing pipeline |
-
----
-
-## Install
-
-```bash
-pip install sentinelai-sdk
-```
-
-After installing, both import names work:
-
-```python
-import sentinel      # ✓
-import sentinelai   # ✓ also works
-```
-
-## Get an API key
-
-1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
-2. Click the **⚙️ gear icon** → enter a key name → **Generate Key**
-3. Copy the `sk_live_...` key — shown only once
-4. Paste it back into Settings → **Save Key** to scope the dashboard to your data
 
 ---
 
@@ -144,8 +123,6 @@ python examples/05_existing_code_minimal.py --api-key sk_live_... --level all
 ---
 
 ## What appears in the dashboard
-
-All patterns produce the same dashboard output:
 
 | Dashboard tab | What you see |
 |---|---|
