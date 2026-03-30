@@ -764,7 +764,19 @@ def patch_anthropic(client, workflow_name: str = None, agent_name: str = None):
     client.messages.create = traced_create
 
 
-class LangChainCallback:
+def _make_langchain_base():
+    """Return BaseCallbackHandler if LangChain is installed, else object."""
+    try:
+        from langchain.callbacks.base import BaseCallbackHandler
+        return BaseCallbackHandler
+    except ImportError:
+        try:
+            from langchain_core.callbacks.base import BaseCallbackHandler
+            return BaseCallbackHandler
+        except ImportError:
+            return object
+
+class LangChainCallback(_make_langchain_base()):
     """
     Sentinel callback handler for LangChain. Implements the LangChain
     BaseCallbackHandler interface — pass it to any chain, agent, or LLM.
@@ -927,4 +939,144 @@ class LangChainCallback:
         """Call when the pipeline is fully done to mark the run completed."""
         _post_async("/api/ingest/run", {
             "run_id": self.run_id, "workflow_name": self.workflow_name, "status": "completed"
+        })
+
+
+# ============================================================
+# Sentinel Client — v1 API (contract validation + replay)
+# ============================================================
+
+class Sentinel:
+    """
+    High-level client for the Sentinel v1 API.
+
+    Usage:
+        from sentinel import Sentinel
+
+        client = Sentinel(api_key="sk_live_...", base_url="https://www.agentsentinelai.com")
+
+        run = client.start_workflow(
+            workflow_name="trip_planner",
+            input={"user_query": "Plan a 5-day Japan trip under $2000"}
+        )
+
+        client.register_contract(
+            workflow_name="trip_planner",
+            from_step="planner",
+            to_step="research",
+            schema={
+                "type": "object",
+                "required": ["destination", "budget", "days"],
+                "properties": {
+                    "destination": {"type": "string"},
+                    "budget": {"type": "number", "minimum": 0},
+                    "days": {"type": "integer", "minimum": 1}
+                }
+            },
+            on_fail="block"
+        )
+
+        result = client.record_step(
+            run_id=run["run_id"],
+            step_name="planner",
+            step_type="agent",
+            status="completed",
+            input={"user_query": "..."},
+            output={"destination": "Japan", "budget": "two thousand", "days": 5}
+        )
+
+        if result.get("boundary_check", {}).get("result") == "failed":
+            replay = client.replay(
+                run_id=run["run_id"],
+                checkpoint_id=result["boundary_check"]["checkpoint_id"],
+                patched_output={"destination": "Japan", "budget": 2000, "days": 5}
+            )
+    """
+
+    def __init__(self, api_key: str, base_url: str = "https://www.agentsentinelai.com"):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+    def _post(self, path: str, body: dict) -> dict:
+        url = self.base_url + path
+        data = _json.dumps(body).encode() if not _has_requests else None
+        if _has_requests:
+            r = _requests.post(url, json=body, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        else:
+            import urllib.request as _ur
+            req = _ur.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with _ur.urlopen(req, timeout=10) as resp:
+                return _json.loads(resp.read())
+
+    def _get(self, path: str) -> dict:
+        url = self.base_url + path
+        if _has_requests:
+            r = _requests.get(url, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        else:
+            import urllib.request as _ur
+            with _ur.urlopen(url, timeout=10) as resp:
+                return _json.loads(resp.read())
+
+    def start_workflow(self, workflow_name: str, external_run_id: str = None,
+                       input: dict = None, metadata: dict = None) -> dict:
+        """Create a workflow run. Returns { run_id, status, created_at }."""
+        body = {"workflow_name": workflow_name}
+        if external_run_id:
+            body["external_run_id"] = external_run_id
+        if input:
+            body["input"] = input
+        if metadata:
+            body["metadata"] = metadata
+        return self._post("/v1/workflows/runs", body)
+
+    def register_contract(self, workflow_name: str, from_step: str, to_step: str,
+                          schema: dict, on_fail: str = "block") -> dict:
+        """Register a JSON Schema contract between two steps."""
+        return self._post("/v1/contracts", {
+            "workflow_name": workflow_name,
+            "from_step": from_step,
+            "to_step": to_step,
+            "schema": schema,
+            "on_fail": on_fail
+        })
+
+    def record_step(self, run_id: str, step_name: str, step_type: str = "agent",
+                    status: str = "completed", input: dict = None, output: dict = None,
+                    started_at: str = None, completed_at: str = None) -> dict:
+        """
+        Record a step execution. If a contract exists from this step, the output
+        is validated automatically. Returns boundary_check if validation ran.
+        """
+        body = {"step_name": step_name, "step_type": step_type, "status": status}
+        if input:
+            body["input"] = input
+        if output:
+            body["output"] = output
+        if started_at:
+            body["started_at"] = started_at
+        if completed_at:
+            body["completed_at"] = completed_at
+        return self._post(f"/v1/workflows/runs/{run_id}/steps", body)
+
+    def get_run(self, run_id: str) -> dict:
+        """Get workflow run details including steps and incidents."""
+        return self._get(f"/v1/workflows/runs/{run_id}")
+
+    def get_incidents(self, run_id: str) -> list:
+        """List all incidents for a run."""
+        return self._get(f"/v1/workflows/runs/{run_id}/incidents").get("incidents", [])
+
+    def replay(self, run_id: str, checkpoint_id: str, patched_output: dict) -> dict:
+        """
+        Replay from a checkpoint with a corrected payload.
+        Returns { replay_run_id, status, replayed_from_step }.
+        """
+        return self._post("/v1/replays", {
+            "run_id": run_id,
+            "checkpoint_id": checkpoint_id,
+            "patched_output": patched_output
         })
