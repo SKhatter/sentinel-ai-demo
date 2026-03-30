@@ -17,6 +17,8 @@ and structured replay from the start.
 
 Usage:
     python examples/06_v1_trip_planner.py --api-key sk_live_...
+
+    # Against a local server (development only):
     python examples/06_v1_trip_planner.py --api-key sk_live_... --endpoint http://localhost:3001
 """
 

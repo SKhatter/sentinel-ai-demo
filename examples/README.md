@@ -161,8 +161,6 @@ if result.get("boundary_check", {}).get("result") == "failed":
 
 ```bash
 python examples/06_v1_trip_planner.py --api-key sk_live_...
-# Against local server:
-python examples/06_v1_trip_planner.py --api-key sk_live_... --endpoint http://localhost:3001
 ```
 
 ---
