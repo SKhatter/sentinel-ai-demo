@@ -15,6 +15,7 @@ Five patterns for connecting Sentinel to your existing code. All produce identic
 | [03 — Anthropic auto-patch](#03-anthropic-auto-patch) | 2 lines total | Teams using Anthropic/Claude SDK |
 | [04 — LangChain callback](#04-langchain-callback) | 1 line total | LangChain / LangGraph users |
 | [05 — Wrap existing code](#05-wrap-existing-code) | 5–15 lines total | Any existing pipeline |
+| [06 — v1 API: contract + replay](#06-v1-api-contract--replay) | new pipeline | Contract validation + replay from failure |
 
 ---
 
@@ -118,6 +119,50 @@ Three levels of effort for wrapping an existing pipeline:
 
 ```bash
 python examples/05_existing_code_minimal.py --api-key sk_live_... --level all
+```
+
+---
+
+---
+
+## 06 — v1 API: Contract + Replay
+
+Uses the `Sentinel` client class. Demonstrates the full contract validation and replay flow:
+planner emits a bad payload → research is blocked → incident created → patch and replay.
+
+```python
+from sentinel import Sentinel
+
+client = Sentinel(api_key="sk_live_...", base_url="https://www.agentsentinelai.com")
+
+run = client.start_workflow(workflow_name="trip_planner", input={"user_query": "..."})
+
+client.register_contract(
+    workflow_name="trip_planner",
+    from_step="planner",
+    to_step="research",
+    schema={"type": "object", "required": ["destination", "budget", "days"], "properties": {
+        "destination": {"type": "string"},
+        "budget": {"type": "number", "minimum": 0},
+        "days": {"type": "integer", "minimum": 1}
+    }}
+)
+
+result = client.record_step(run_id=run["run_id"], step_name="planner", status="completed",
+    output={"destination": "Japan", "budget": "two thousand", "days": 5})
+
+if result.get("boundary_check", {}).get("result") == "failed":
+    replay = client.replay(
+        run_id=run["run_id"],
+        checkpoint_id=result["boundary_check"]["checkpoint_id"],
+        patched_output={"destination": "Japan", "budget": 2000, "days": 5}
+    )
+```
+
+```bash
+python examples/06_v1_trip_planner.py --api-key sk_live_...
+# Against local server:
+python examples/06_v1_trip_planner.py --api-key sk_live_... --endpoint http://localhost:3001
 ```
 
 ---
