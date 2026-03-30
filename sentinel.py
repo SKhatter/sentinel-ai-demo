@@ -6,7 +6,7 @@ Drop-in reliability observability for multi-agent workflows.
 Quickstart:
     import sentinel
 
-    sentinel.init(api_key="sk_live_...", endpoint="https://agentsentinelai.com")
+    sentinel.init(api_key="sk_live_...", endpoint="https://www.agentsentinelai.com")
 
     with sentinel.workflow("My Pipeline") as run:
         with run.step("research-agent", step_type="llm_call") as step:
@@ -42,13 +42,13 @@ except ImportError:
 
 _config = {
     "api_key": None,
-    "endpoint": "https://agentsentinelai.com",
+    "endpoint": "https://www.agentsentinelai.com",
     "timeout": 5,
     "enabled": True,
 }
 
 
-def init(api_key: str, endpoint: str = "https://agentsentinelai.com", timeout: int = 5):
+def init(api_key: str, endpoint: str = "https://www.agentsentinelai.com", timeout: int = 5):
     """
     Initialize the Sentinel SDK. Call this once at app startup.
 
@@ -567,3 +567,364 @@ def validate_payload(agent: str, payload: Dict) -> Dict:
                 return _j.loads(resp.read())
     except Exception:
         return {"valid": True}  # fail open — don't block agents if Sentinel is unreachable
+
+
+# ── Auto-Instrumentation ───────────────────────────────────────────────────────
+#
+# These helpers let you trace existing code with zero or minimal changes.
+#
+# Usage patterns (pick one):
+#
+#   1. patch_openai(client)     — auto-trace every OpenAI call
+#   2. patch_anthropic(client)  — auto-trace every Anthropic call
+#   3. LangChainCallback()      — pass as a LangChain callback handler
+#   4. @trace_step(...)         — decorator on any function
+#   5. with workflow(...) / run.step(...) — explicit context managers
+#
+# All patterns funnel into the same Sentinel ingest API — they appear
+# identically in the dashboard regardless of which pattern you use.
+
+_active_run = threading.local()  # thread-local active run context
+
+
+def set_active_run(run_id: str, workflow_name: str = "Pipeline"):
+    """
+    Set the active run for the current thread. Auto-patch functions will
+    attach their steps to this run instead of creating a new one each call.
+
+    Call this at the start of each pipeline execution:
+        sentinel.set_active_run(run_id="run_001", workflow_name="My Pipeline")
+    """
+    _active_run.run_id = run_id
+    _active_run.workflow_name = workflow_name
+
+
+def _get_active_run():
+    run_id = getattr(_active_run, 'run_id', None) or f"run_{uuid.uuid4().hex[:16]}"
+    workflow_name = getattr(_active_run, 'workflow_name', 'Auto-traced Pipeline')
+    return run_id, workflow_name
+
+
+def patch_openai(client, workflow_name: str = None, agent_name: str = None):
+    """
+    Auto-trace every OpenAI chat completion call. Zero changes to your agent code.
+
+    Usage:
+        import openai, sentinel
+        sentinel.init(api_key="sk_live_...")
+
+        client = openai.OpenAI(api_key="...")
+        sentinel.patch_openai(client)
+
+        # Everything below is your existing code — unchanged
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}]
+        )
+
+    Each call becomes a step in the dashboard under the active run.
+    Token counts and latency are captured automatically from the response.
+    """
+    original_create = client.chat.completions.create
+
+    @functools.wraps(original_create)
+    def traced_create(*args, **kwargs):
+        run_id, wf_name = _get_active_run()
+        if workflow_name:
+            wf_name = workflow_name
+        model = kwargs.get('model', 'unknown')
+        name = agent_name or f"openai/{model}"
+
+        _post_async("/api/ingest/run", {
+            "run_id": run_id, "workflow_name": wf_name,
+            "status": "running", "started_at": _now()
+        })
+
+        step_id = f"step_{uuid.uuid4().hex[:12]}"
+        started = _now()
+        t0 = time.time()
+        messages = kwargs.get('messages', [])
+
+        _post_async("/api/ingest/step", {
+            "run_id": run_id, "step_id": step_id,
+            "step_name": name, "step_type": "llm_call",
+            "status": "running", "started_at": started,
+            "input": {"messages": len(messages), "model": model,
+                      "last_user_msg": next((m['content'][:200] for m in reversed(messages)
+                                             if m.get('role') == 'user'), None)}
+        })
+
+        try:
+            result = original_create(*args, **kwargs)
+            duration_ms = int((time.time() - t0) * 1000)
+            usage = getattr(result, 'usage', None)
+            output = {"model": model,
+                      "finish_reason": result.choices[0].finish_reason if result.choices else None}
+            if usage:
+                output.update({"prompt_tokens": usage.prompt_tokens,
+                                "completion_tokens": usage.completion_tokens,
+                                "total_tokens": usage.total_tokens})
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id,
+                "step_name": name, "step_type": "llm_call",
+                "status": "success", "started_at": started,
+                "completed_at": _now(), "duration_ms": duration_ms, "output": output
+            })
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name, "status": "completed"})
+            return result
+        except Exception as e:
+            duration_ms = int((time.time() - t0) * 1000)
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id,
+                "step_name": name, "step_type": "llm_call",
+                "status": "failed", "started_at": started,
+                "completed_at": _now(), "duration_ms": duration_ms, "error": str(e)
+            })
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name, "status": "failed"})
+            raise
+
+    client.chat.completions.create = traced_create
+
+
+def patch_anthropic(client, workflow_name: str = None, agent_name: str = None):
+    """
+    Auto-trace every Anthropic messages.create call. Zero changes to your agent code.
+
+    Usage:
+        import anthropic, sentinel
+        sentinel.init(api_key="sk_live_...")
+
+        client = anthropic.Anthropic(api_key="...")
+        sentinel.patch_anthropic(client)
+
+        # Your existing code — unchanged
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Hello"}]
+        )
+    """
+    original_create = client.messages.create
+
+    @functools.wraps(original_create)
+    def traced_create(*args, **kwargs):
+        run_id, wf_name = _get_active_run()
+        if workflow_name:
+            wf_name = workflow_name
+        model = kwargs.get('model', 'unknown')
+        name = agent_name or f"anthropic/{model}"
+
+        _post_async("/api/ingest/run", {
+            "run_id": run_id, "workflow_name": wf_name,
+            "status": "running", "started_at": _now()
+        })
+
+        step_id = f"step_{uuid.uuid4().hex[:12]}"
+        started = _now()
+        t0 = time.time()
+        messages = kwargs.get('messages', [])
+
+        _post_async("/api/ingest/step", {
+            "run_id": run_id, "step_id": step_id,
+            "step_name": name, "step_type": "llm_call",
+            "status": "running", "started_at": started,
+            "input": {"messages": len(messages), "model": model,
+                      "max_tokens": kwargs.get('max_tokens'),
+                      "last_user_msg": next((m['content'][:200] for m in reversed(messages)
+                                             if m.get('role') == 'user'), None)}
+        })
+
+        try:
+            result = original_create(*args, **kwargs)
+            duration_ms = int((time.time() - t0) * 1000)
+            usage = getattr(result, 'usage', None)
+            output = {"model": model, "stop_reason": getattr(result, 'stop_reason', None)}
+            if usage:
+                output.update({"input_tokens": getattr(usage, 'input_tokens', None),
+                                "output_tokens": getattr(usage, 'output_tokens', None)})
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id,
+                "step_name": name, "step_type": "llm_call",
+                "status": "success", "started_at": started,
+                "completed_at": _now(), "duration_ms": duration_ms, "output": output
+            })
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name, "status": "completed"})
+            return result
+        except Exception as e:
+            duration_ms = int((time.time() - t0) * 1000)
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id,
+                "step_name": name, "step_type": "llm_call",
+                "status": "failed", "started_at": started,
+                "completed_at": _now(), "duration_ms": duration_ms, "error": str(e)
+            })
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name, "status": "failed"})
+            raise
+
+    client.messages.create = traced_create
+
+
+class LangChainCallback:
+    """
+    Sentinel callback handler for LangChain. Implements the LangChain
+    BaseCallbackHandler interface — pass it to any chain, agent, or LLM.
+
+    Usage:
+        from langchain.chat_models import ChatOpenAI
+        from langchain.chains import LLMChain
+
+        import sentinel
+        sentinel.init(api_key="sk_live_...")
+
+        cb = sentinel.LangChainCallback(workflow_name="My LangChain Pipeline")
+
+        llm = ChatOpenAI(model="gpt-4o", callbacks=[cb])
+        chain = LLMChain(llm=llm, prompt=prompt, callbacks=[cb])
+        result = chain.run("Find fintech leads")
+
+    Zero changes to your chain logic. Every LLM call, chain start/end,
+    tool call, and agent action appears as a step in Sentinel.
+    """
+
+    def __init__(self, workflow_name: str = "LangChain Pipeline", run_id: str = None):
+        self.workflow_name = workflow_name
+        self.run_id = run_id or f"run_{uuid.uuid4().hex[:16]}"
+        self._steps = {}  # langchain run_id → sentinel step_id + metadata
+        _post_async("/api/ingest/run", {
+            "run_id": self.run_id, "workflow_name": self.workflow_name,
+            "status": "running", "started_at": _now()
+        })
+
+    # ── LLM callbacks ──────────────────────────────────────────
+
+    def on_llm_start(self, serialized, prompts, *, run_id=None, **kwargs):
+        name = (serialized.get('id') or ['llm'])[-1]
+        step_id = f"step_{uuid.uuid4().hex[:12]}"
+        self._steps[str(run_id)] = {"step_id": step_id, "name": name, "started": _now(), "t0": time.time()}
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": step_id,
+            "step_name": name, "step_type": "llm_call",
+            "status": "running", "started_at": self._steps[str(run_id)]["started"],
+            "input": {"prompts": [p[:200] for p in prompts]}
+        })
+
+    def on_llm_end(self, response, *, run_id=None, **kwargs):
+        meta = self._steps.pop(str(run_id), {})
+        if not meta:
+            return
+        duration_ms = int((time.time() - meta["t0"]) * 1000)
+        generations = getattr(response, 'generations', [[]])
+        text = generations[0][0].text[:200] if generations and generations[0] else None
+        usage = getattr(response, 'llm_output', {}) or {}
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta["step_id"],
+            "step_name": meta["name"], "step_type": "llm_call",
+            "status": "success", "started_at": meta["started"],
+            "completed_at": _now(), "duration_ms": duration_ms,
+            "output": {"text_preview": text, "token_usage": usage.get("token_usage")}
+        })
+
+    def on_llm_error(self, error, *, run_id=None, **kwargs):
+        meta = self._steps.pop(str(run_id), {})
+        if not meta:
+            return
+        duration_ms = int((time.time() - meta["t0"]) * 1000)
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta["step_id"],
+            "step_name": meta["name"], "step_type": "llm_call",
+            "status": "failed", "started_at": meta["started"],
+            "completed_at": _now(), "duration_ms": duration_ms, "error": str(error)
+        })
+        _post_async("/api/ingest/run", {"run_id": self.run_id, "workflow_name": self.workflow_name, "status": "failed"})
+
+    # ── Chain callbacks ─────────────────────────────────────────
+
+    def on_chain_start(self, serialized, inputs, *, run_id=None, **kwargs):
+        name = (serialized.get('id') or ['chain'])[-1]
+        step_id = f"step_{uuid.uuid4().hex[:12]}"
+        self._steps[f"chain_{run_id}"] = {"step_id": step_id, "name": name, "started": _now(), "t0": time.time()}
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": step_id,
+            "step_name": name, "step_type": "llm_call",
+            "status": "running", "started_at": self._steps[f"chain_{run_id}"]["started"],
+            "input": {k: str(v)[:200] for k, v in (inputs or {}).items()}
+        })
+
+    def on_chain_end(self, outputs, *, run_id=None, **kwargs):
+        meta = self._steps.pop(f"chain_{run_id}", {})
+        if not meta:
+            return
+        duration_ms = int((time.time() - meta["t0"]) * 1000)
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta["step_id"],
+            "step_name": meta["name"], "step_type": "llm_call",
+            "status": "success", "started_at": meta["started"],
+            "completed_at": _now(), "duration_ms": duration_ms,
+            "output": {k: str(v)[:200] for k, v in (outputs or {}).items()}
+        })
+        _post_async("/api/ingest/run", {"run_id": self.run_id, "workflow_name": self.workflow_name, "status": "completed"})
+
+    def on_chain_error(self, error, *, run_id=None, **kwargs):
+        meta = self._steps.pop(f"chain_{run_id}", {})
+        if not meta:
+            return
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta.get("step_id", genId() if False else f"step_{uuid.uuid4().hex[:12]}"),
+            "step_name": meta.get("name", "chain"), "step_type": "llm_call",
+            "status": "failed", "started_at": meta.get("started", _now()),
+            "completed_at": _now(), "error": str(error)
+        })
+        _post_async("/api/ingest/run", {"run_id": self.run_id, "workflow_name": self.workflow_name, "status": "failed"})
+
+    # ── Tool callbacks ──────────────────────────────────────────
+
+    def on_tool_start(self, serialized, input_str, *, run_id=None, **kwargs):
+        name = serialized.get('name', 'tool')
+        step_id = f"step_{uuid.uuid4().hex[:12]}"
+        self._steps[f"tool_{run_id}"] = {"step_id": step_id, "name": name, "started": _now(), "t0": time.time()}
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": step_id,
+            "step_name": name, "step_type": "tool_call",
+            "status": "running", "started_at": self._steps[f"tool_{run_id}"]["started"],
+            "input": {"input": str(input_str)[:300]}
+        })
+
+    def on_tool_end(self, output, *, run_id=None, **kwargs):
+        meta = self._steps.pop(f"tool_{run_id}", {})
+        if not meta:
+            return
+        duration_ms = int((time.time() - meta["t0"]) * 1000)
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta["step_id"],
+            "step_name": meta["name"], "step_type": "tool_call",
+            "status": "success", "started_at": meta["started"],
+            "completed_at": _now(), "duration_ms": duration_ms,
+            "output": {"output": str(output)[:300]}
+        })
+
+    def on_tool_error(self, error, *, run_id=None, **kwargs):
+        meta = self._steps.pop(f"tool_{run_id}", {})
+        if not meta:
+            return
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id, "step_id": meta["step_id"],
+            "step_name": meta["name"], "step_type": "tool_call",
+            "status": "failed", "started_at": meta["started"],
+            "completed_at": _now(), "error": str(error)
+        })
+
+    def on_agent_action(self, action, *, run_id=None, **kwargs):
+        _post_async("/api/ingest/step", {
+            "run_id": self.run_id,
+            "step_id": f"step_{uuid.uuid4().hex[:12]}",
+            "step_name": f"agent_action:{action.tool}",
+            "step_type": "agent_handoff",
+            "status": "running", "started_at": _now(),
+            "input": {"tool": action.tool, "input": str(action.tool_input)[:200]}
+        })
+
+    def finish(self):
+        """Call when the pipeline is fully done to mark the run completed."""
+        _post_async("/api/ingest/run", {
+            "run_id": self.run_id, "workflow_name": self.workflow_name, "status": "completed"
+        })
