@@ -1,25 +1,97 @@
-# Sentinel.AI — Integration Examples
+# Sentinel.AI — Integration Patterns
 
-Five patterns for connecting Sentinel to your existing code. All produce identical output in the dashboard — pick whichever requires the fewest changes to your codebase.
+Sentinel validates handoffs between agents, blocks unsafe execution, and lets you replay workflows from failure points.
 
-> New here? Start with the [Quickstart guide](../QUICKSTART.md) first.
+**Start with Contract + Replay** if you want the core product — it's what makes Sentinel different.
+Use the tracing patterns below that if you want to instrument an existing pipeline with minimal code changes.
 
 ---
 
-## Which pattern should I use?
+## 01 — Contract + Replay (start here)
+
+Agent A emits invalid output → Sentinel blocks Agent B → you patch and replay safely.
+
+This is the core Sentinel flow. Every other pattern adds observability on top of this guarantee.
+
+```python
+from sentinel import Sentinel
+
+client = Sentinel(api_key="sk_live_...", base_url="https://www.agentsentinelai.com")
+
+# 1. Start a run
+run = client.start_workflow(workflow_name="trip_planner", input={"user_query": "..."})
+
+# 2. Enforce what planner must hand to research
+client.register_contract(
+    workflow_name="trip_planner",
+    from_step="planner",
+    to_step="research",
+    schema={
+        "type": "object",
+        "required": ["destination", "budget", "days"],
+        "properties": {
+            "destination": {"type": "string"},
+            "budget":      {"type": "number", "minimum": 0},
+            "days":        {"type": "integer", "minimum": 1}
+        }
+    }
+)
+
+# 3. Planner emits bad output — budget is a string
+result = client.record_step(
+    run_id=run["run_id"], step_name="planner", status="completed",
+    output={"destination": "Japan", "budget": "two thousand", "days": 5}
+)
+
+# 4. Sentinel blocked research and created an incident
+bc = result["boundary_check"]
+# bc["result"]           → "failed"
+# bc["reason"]           → '"budget" must be a number'
+# bc["blocked_next_step"]→ "research"
+# bc["incident_id"]      → "inc_..."
+# bc["checkpoint_id"]    → "ckpt_..."
+
+# 5. Patch and replay — research and executor continue from here
+replay = client.replay(
+    run_id=run["run_id"],
+    checkpoint_id=bc["checkpoint_id"],
+    patched_output={"destination": "Japan", "budget": 2000, "days": 5}
+)
+# replay["status"] → "completed"
+```
+
+```bash
+python examples/06_v1_trip_planner.py --api-key sk_live_...
+```
+
+**What you see in the dashboard after this run:**
+
+| | |
+|---|---|
+| **Blocked transition** | planner → research blocked with reason |
+| **Contract violation** | incident created automatically, status: open |
+| **Replay run** | new run linked to original, planner: replayed, research: completed |
+| **Reused steps** | prior successful steps carried forward, not re-executed |
+
+---
+
+## Tracing patterns — instrument existing code
+
+If you have an existing pipeline and want to add observability, pick whichever pattern requires the fewest changes.
 
 | Pattern | Changes needed | Best for |
 |---|---|---|
-| [01 — Decorator](#01-decorator) | 1 line per function | Standalone agent functions |
-| [02 — OpenAI auto-patch](#02-openai-auto-patch) | 2 lines total | Teams using OpenAI Python SDK |
-| [03 — Anthropic auto-patch](#03-anthropic-auto-patch) | 2 lines total | Teams using Anthropic/Claude SDK |
-| [04 — LangChain callback](#04-langchain-callback) | 1 line total | LangChain / LangGraph users |
-| [05 — Wrap existing code](#05-wrap-existing-code) | 5–15 lines total | Any existing pipeline |
-| [06 — v1 API: contract + replay](#06-v1-api-contract--replay) | new pipeline | Contract validation + replay from failure |
+| [02 — Decorator](#02-decorator) | 1 line per function | Standalone agent functions |
+| [03 — OpenAI auto-patch](#03-openai-auto-patch) | 2 lines total | Teams using OpenAI Python SDK |
+| [04 — Anthropic auto-patch](#04-anthropic-auto-patch) | 2 lines total | Teams using Anthropic/Claude SDK |
+| [05 — LangChain callback](#05-langchain-callback) | 1 line total | LangChain / LangGraph users |
+| [06 — Wrap existing code](#06-wrap-existing-code) | 5–15 lines total | Any existing pipeline |
+
+All tracing patterns feed the same dashboard: step latency, input/output payloads, and automatic incidents on failure.
 
 ---
 
-## 01 — Decorator
+## 02 — Decorator
 
 Add `@sentinel.trace_step(...)` above any existing agent function. The function body is untouched.
 
@@ -38,7 +110,7 @@ python examples/01_decorator.py --api-key sk_live_...
 
 ---
 
-## 02 — OpenAI Auto-Patch
+## 03 — OpenAI Auto-Patch
 
 Call `sentinel.patch_openai(client)` once. Every `client.chat.completions.create()` call is traced automatically.
 
@@ -62,7 +134,7 @@ python examples/02_openai_autopatch.py --api-key sk_live_... --openai-key sk-...
 
 ---
 
-## 03 — Anthropic Auto-Patch
+## 04 — Anthropic Auto-Patch
 
 Same as OpenAI but for Anthropic's SDK.
 
@@ -84,7 +156,7 @@ python examples/03_anthropic_autopatch.py --api-key sk_live_... --simulate
 
 ---
 
-## 04 — LangChain Callback
+## 05 — LangChain Callback
 
 Pass `sentinel.LangChainCallback()` to your LangChain LLMs and chains. Every LLM call, chain step, and tool use is traced automatically.
 
@@ -109,7 +181,7 @@ python examples/04_langchain_callback.py --api-key sk_live_... --openai-key sk-.
 
 ---
 
-## 05 — Wrap Existing Code
+## 06 — Wrap Existing Code
 
 Three levels of effort for wrapping an existing pipeline:
 
@@ -120,57 +192,3 @@ Three levels of effort for wrapping an existing pipeline:
 ```bash
 python examples/05_existing_code_minimal.py --api-key sk_live_... --level all
 ```
-
----
-
----
-
-## 06 — v1 API: Contract + Replay
-
-Uses the `Sentinel` client class. Demonstrates the full contract validation and replay flow:
-planner emits a bad payload → research is blocked → incident created → patch and replay.
-
-```python
-from sentinel import Sentinel
-
-client = Sentinel(api_key="sk_live_...", base_url="https://www.agentsentinelai.com")
-
-run = client.start_workflow(workflow_name="trip_planner", input={"user_query": "..."})
-
-client.register_contract(
-    workflow_name="trip_planner",
-    from_step="planner",
-    to_step="research",
-    schema={"type": "object", "required": ["destination", "budget", "days"], "properties": {
-        "destination": {"type": "string"},
-        "budget": {"type": "number", "minimum": 0},
-        "days": {"type": "integer", "minimum": 1}
-    }}
-)
-
-result = client.record_step(run_id=run["run_id"], step_name="planner", status="completed",
-    output={"destination": "Japan", "budget": "two thousand", "days": 5})
-
-if result.get("boundary_check", {}).get("result") == "failed":
-    replay = client.replay(
-        run_id=run["run_id"],
-        checkpoint_id=result["boundary_check"]["checkpoint_id"],
-        patched_output={"destination": "Japan", "budget": 2000, "days": 5}
-    )
-```
-
-```bash
-python examples/06_v1_trip_planner.py --api-key sk_live_...
-```
-
----
-
-## What appears in the dashboard
-
-| Dashboard tab | What you see |
-|---|---|
-| **Workflows** | Execution DAG: Agent A → B → C → D |
-| **Traces** | Per-step latency, input/output payloads |
-| **Incidents** | Auto-created when any step raises an exception |
-| **State** | Shared state written by agents (if using `sentinel.propose_state`) |
-| **Contracts** | Validated handoffs between agents (if using `sentinel.handoff`) |
