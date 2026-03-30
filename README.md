@@ -40,38 +40,24 @@ All agent activity, state changes, and handoffs flow through Sentinel and appear
 ## Prerequisites
 
 - Python 3.8+
-- No pip packages required — the SDK is a single file (`sentinel_sdk.py`)
 
 ---
 
-## Step 1 — Get an API key
+## Step 1 — Install the SDK
 
 ```bash
-curl -X POST https://www.agentsentinelai.com/api/keys \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-outreach-demo"}'
+pip install sentinelai-sdk
 ```
 
-Response:
-```json
-{ "key": "sk_live_...", "name": "my-outreach-demo", "created_at": "..." }
-```
-
-Save the key. It is only shown once.
-
-Alternatively, generate a key from the dashboard at https://www.agentsentinelai.com/dashboard (Settings tab → API Keys).
+The `sentinel.py` file in this repo is also bundled for reference, but the pip package is the recommended way.
 
 ---
 
-## Step 2 — Download the SDK
+## Step 2 — Get an API key
 
-The SDK is a single Python file. No pip install needed.
+Go to **https://www.agentsentinelai.com/dashboard** → click the ⚙️ gear icon → **Generate Key**.
 
-```bash
-curl -O https://raw.githubusercontent.com/SKhatter/sentinel-ai/main/sentinel_sdk.py
-```
-
-Or just use the `sentinel.py` already in this repository.
+Save the key — it starts with `sk_live_...`.
 
 ---
 

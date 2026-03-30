@@ -17,6 +17,14 @@ output in the dashboard — use whichever requires the fewest changes to your co
 
 ---
 
+## Install
+
+```bash
+pip install sentinelai-sdk
+```
+
+---
+
 ## 01 — Decorator
 
 Add `@sentinel.trace_step(...)` above any existing agent function. The function body is untouched.
