@@ -49,6 +49,13 @@ All agent activity, state changes, and handoffs flow through Sentinel and appear
 pip install sentinelai-sdk
 ```
 
+After installing, both import names work:
+
+```python
+import sentinel      # ✓
+import sentinelai   # ✓ also works
+```
+
 The `sentinel.py` file in this repo is also bundled for reference, but the pip package is the recommended way.
 
 ---

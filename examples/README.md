@@ -23,6 +23,13 @@ output in the dashboard — use whichever requires the fewest changes to your co
 pip install sentinelai-sdk
 ```
 
+After installing, both import names work:
+
+```python
+import sentinel      # ✓
+import sentinelai   # ✓ also works
+```
+
 ## Get an API key
 
 1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
