@@ -26,15 +26,21 @@ import sentinelai   # ✓ also works
 
 | I want to… | Feature | Dashboard tab |
 |---|---|---|
-| See what my agents are doing — steps, inputs, outputs, latency | **Tracing** | Traces |
-| Block bad data from reaching the next agent, replay from failure | **Contract + Replay** | Incidents |
-| Let concurrent agents write shared state without overwriting each other | **Shared State** | State |
+| See what my agents are doing — steps, inputs, outputs, latency | **[Tracing](#1-tracing--see-what-your-agents-are-doing)** | Traces |
+| Block bad data from reaching the next agent, replay from failure | **[Contract + Replay](#2-contract--replay--block-bad-data-recover-from-failure)** | Incidents |
+| Let concurrent agents write shared state without overwriting each other | **[Shared State](#3-shared-state--safe-concurrent-writes)** | State |
+
+These stack — you can use one, two, or all three. See [Using all three together](#using-all-three-together).
 
 ---
 
 ## 1. Tracing — See what your agents are doing
 
-Adds step-by-step visibility. Nothing is blocked. Dashboard → **Traces** tab.
+Adds step-by-step visibility into every step: status, latency, inputs, outputs. Nothing is blocked or enforced. Dashboard → **Traces** tab.
+
+**Use when:** you want to observe a pipeline — debug failures, measure latency, inspect what each agent received and returned.
+
+**Skip when:** you only make single LLM calls with no pipeline structure. Nothing to trace.
 
 > Lines starting with `+` are new. Copy without the `+`.
 
@@ -200,6 +206,10 @@ def run_pipeline(query):
 
 Define what one agent must hand to the next. If the output is invalid, Sentinel blocks the downstream agent, creates an incident, and saves a checkpoint so you can fix and replay — without re-running the whole pipeline.
 
+**Use when:** agents pass structured data to each other and a bad payload reaching the next agent causes real damage — wasted compute, wrong emails sent, corrupted state.
+
+**Skip when:** agents are independent and don't hand off structured data to each other, or failures are cheap to re-run from scratch.
+
 Dashboard → **Incidents** tab · [Live demo](https://www.agentsentinelai.com/trip-planner)
 
 > Lines starting with `+` are new. Copy without the `+`.
@@ -268,6 +278,10 @@ Incidents tab shows: type · reason · blocked transition · checkpoint ID.
 
 Multiple agents writing the same key simultaneously without data loss. Uses optimistic locking — each write includes the version it read; conflicts are detected and retried.
 
+**Use when:** two or more agents run in parallel and need to contribute to the same shared key (e.g. one agent writes a score, another writes a sentiment, both into the same lead record).
+
+**Skip when:** your agents run sequentially — no concurrent writes, no conflict possible.
+
 Dashboard → **State** tab
 
 **Before** — two agents race to update the same key; one write is silently lost
@@ -287,6 +301,38 @@ sentinel.propose_state_with_retry(run_id, "lead", lambda cur: {**cur, "tone": "p
 ```
 
 → [Runnable example](examples/demo_state_conflict.py)
+
+---
+
+## Using all three together
+
+A production pipeline typically uses all three:
+
+```
+Research Agent
+  → traces each step                          (Tracing)
+  → writes best lead to shared state          (Shared State)
+  → hands off lead to Personalize Agent
+      └─ contract validates the payload       (Contract + Replay)
+
+Personalize Agent
+  → reads lead from shared state              (Shared State)
+  → traces each step                          (Tracing)
+  → hands off email draft to Deliver Agent
+      └─ contract validates the payload       (Contract + Replay)
+
+Deliver Agent
+  → traces each step                          (Tracing)
+  → writes outcome to shared state            (Shared State)
+```
+
+→ [Full runnable example](pipeline.py) — a 3-agent customer outreach pipeline using all three features end to end.
+
+```bash
+python pipeline.py --api-key sk_live_...
+```
+
+Dashboard shows: steps in **Traces**, blocked handoffs in **Incidents**, agent writes in **State**.
 
 ---
 
