@@ -6,11 +6,6 @@
 pip install sentinelai-sdk
 ```
 
-```python
-import sentinel      # ✓
-import sentinelai   # ✓ also works
-```
-
 ## Get an API key
 
 1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
@@ -22,31 +17,62 @@ import sentinelai   # ✓ also works
 
 ---
 
-## Pick what you need
+## Quickest way to get started — CLI
 
-| I want to… | Feature | Dashboard tab |
+Run this on your existing pipeline file. It asks what you want to add and writes the instrumented version.
+
+```bash
+sentinel instrument pipeline.py
+```
+
+```
+Analyzing pipeline.py...
+
+Found 4 functions: planner, research, executor, run_pipeline
+
+Your Sentinel API key: sk_live_...
+
+Add tracing? (Y/n): Y
+
+Add contracts? (Y/n): Y
+  Enforce what 'planner' returns before 'research' runs? (Y/n): Y
+  Fields: destination:string, budget:number, days:integer
+  ✓ Contract: planner → research
+
+Do agents run concurrently? Add shared state? (y/N): N
+
+✓ Written to: pipeline_sentinel.py
+```
+
+Writes `pipeline_sentinel.py` — your original file is never overwritten. Review and rename when ready.
+
+Covers all three features: **tracing**, **contracts**, and **shared state**.
+
+---
+
+## What Sentinel adds
+
+| Feature | What it does | Dashboard tab |
 |---|---|---|
-| See what my agents are doing — steps, inputs, outputs, latency | **[Tracing](#1-tracing--see-what-your-agents-are-doing)** | Traces |
-| Block bad data from reaching the next agent, replay from failure | **[Contract + Replay](#2-contract--replay--block-bad-data-recover-from-failure)** | Incidents |
-| Let concurrent agents write shared state without overwriting each other | **[Shared State](#3-shared-state--safe-concurrent-writes)** | State |
+| **Tracing** | Records every step — status, latency, inputs, outputs | Traces |
+| **Contract + Replay** | Blocks bad data between agents, saves checkpoint to replay from | Incidents |
+| **Shared State** | Safe concurrent writes — no silent overwrites between parallel agents | State |
 
-These stack — you can use one, two, or all three. See [Using all three together](#using-all-three-together).
+These stack — use one, two, or all three.
 
 ---
 
 ## 1. Tracing — See what your agents are doing
 
-Adds step-by-step visibility into every step: status, latency, inputs, outputs. Nothing is blocked or enforced. Dashboard → **Traces** tab.
-
 **Use when:** you want to observe a pipeline — debug failures, measure latency, inspect what each agent received and returned.
 
-**Skip when:** you only make single LLM calls with no pipeline structure. Nothing to trace.
+**Skip when:** you only make single LLM calls with no pipeline structure.
 
 > Lines starting with `+` are new. Copy without the `+`.
 
-### Option A — auto_instrument() — zero changes to existing code
+### Option A — auto_instrument() — zero changes, tracing only
 
-One line. Sentinel auto-detects which LLM SDKs are installed (openai, anthropic, langchain) and patches them all. No changes to your existing agent code. → [full example](examples/07_auto_instrument.py)
+One line. Detects openai, anthropic, langchain and patches them automatically. → [full example](examples/07_auto_instrument.py)
 
 **Before**
 ```python
@@ -59,18 +85,18 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 ```diff
  import openai
 +import sentinel
-+sentinel.auto_instrument(api_key="sk_live_...")   # detects openai, patches it automatically
-+sentinel.set_active_run("run_001", "my_pipeline") # group all calls under one run
++sentinel.auto_instrument(api_key="sk_live_...")   # detects openai, patches automatically
++sentinel.set_active_run("run_001", "my_pipeline")
 
  client = openai.OpenAI(api_key="...")
  response = client.chat.completions.create(model="gpt-4o", messages=[...])
 ```
 
-Works for anthropic and langchain too — same two lines, no other changes.
+> Want contracts and shared state too? Use `sentinel instrument pipeline.py` instead.
 
 ---
 
-### Option B — Decorator (1 line per function) — best for custom/non-LLM-SDK agents
+### Option B — Decorator (1 line per function)
 
 → [full example](examples/01_decorator.py)
 
@@ -99,14 +125,13 @@ def research(plan: dict) -> dict:
 
 ---
 
-### Option B — OpenAI auto-patch (4 lines total)
+### Option C — OpenAI auto-patch
 
-Every `chat.completions.create()` call is traced automatically. → [full example](examples/02_openai_autopatch.py)
+→ [full example](examples/02_openai_autopatch.py)
 
 **Before**
 ```python
 import openai
-
 client = openai.OpenAI(api_key="...")
 response = client.chat.completions.create(model="gpt-4o", messages=[...])
 ```
@@ -118,7 +143,7 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 +sentinel.init(api_key="sk_live_...")
 
  client = openai.OpenAI(api_key="...")
-+sentinel.patch_openai(client)          # all calls traced from here
++sentinel.patch_openai(client)
 +sentinel.set_active_run("run_001", "my_pipeline")
 
  response = client.chat.completions.create(model="gpt-4o", messages=[...])
@@ -126,14 +151,13 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 
 ---
 
-### Option C — Anthropic auto-patch (4 lines total)
+### Option D — Anthropic auto-patch
 
 → [full example](examples/03_anthropic_autopatch.py)
 
 **Before**
 ```python
 import anthropic
-
 client = anthropic.Anthropic(api_key="...")
 response = client.messages.create(model="claude-opus-4-6", messages=[...])
 ```
@@ -145,7 +169,7 @@ response = client.messages.create(model="claude-opus-4-6", messages=[...])
 +sentinel.init(api_key="sk_live_...")
 
  client = anthropic.Anthropic(api_key="...")
-+sentinel.patch_anthropic(client)       # all calls traced from here
++sentinel.patch_anthropic(client)
 +sentinel.set_active_run("run_001", "my_pipeline")
 
  response = client.messages.create(model="claude-opus-4-6", messages=[...])
@@ -153,7 +177,7 @@ response = client.messages.create(model="claude-opus-4-6", messages=[...])
 
 ---
 
-### Option D — LangChain callback (4 lines total)
+### Option E — LangChain callback
 
 → [full example](examples/04_langchain_callback.py)
 
@@ -186,9 +210,9 @@ result = chain.run("my query")
 
 ---
 
-### Option E — Wrap existing code (5–15 lines total)
+### Option F — Wrap existing code
 
-Full control over what inputs/outputs are captured. → [full example](examples/05_existing_code_minimal.py)
+→ [full example](examples/05_existing_code_minimal.py)
 
 **Before**
 ```python
@@ -230,11 +254,9 @@ def run_pipeline(query):
 
 ## 2. Contract + Replay — Block bad data, recover from failure
 
-Define what one agent must hand to the next. If the output is invalid, Sentinel blocks the downstream agent, creates an incident, and saves a checkpoint so you can fix and replay — without re-running the whole pipeline.
-
 **Use when:** agents pass structured data to each other and a bad payload reaching the next agent causes real damage — wasted compute, wrong emails sent, corrupted state.
 
-**Skip when:** agents are independent and don't hand off structured data to each other, or failures are cheap to re-run from scratch.
+**Skip when:** agents are independent, don't hand off structured data, or failures are cheap to re-run from scratch.
 
 Dashboard → **Incidents** tab · [Live demo](https://www.agentsentinelai.com/trip-planner)
 
@@ -294,19 +316,15 @@ def run_pipeline(query):
 | research | blocked | completed |
 | executor | pending | completed |
 
-Incidents tab shows: type · reason · blocked transition · checkpoint ID.
-
 → [Runnable example](examples/06_v1_trip_planner.py)
 
 ---
 
 ## 3. Shared State — Safe concurrent writes
 
-Multiple agents writing the same key simultaneously without data loss. Uses optimistic locking — each write includes the version it read; conflicts are detected and retried.
+**Use when:** two or more agents run in parallel and write to the same key.
 
-**Use when:** two or more agents run in parallel and need to contribute to the same shared key (e.g. one agent writes a score, another writes a sentiment, both into the same lead record).
-
-**Skip when:** your agents run sequentially — no concurrent writes, no conflict possible.
+**Skip when:** agents run sequentially — no concurrent writes, no conflict possible.
 
 Dashboard → **State** tab
 
@@ -332,72 +350,64 @@ sentinel.propose_state_with_retry(run_id, "lead", lambda cur: {**cur, "tone": "p
 
 ## Using all three together
 
-→ [Full runnable example](pipeline.py) — 3-agent customer outreach pipeline using all three features.
+The recommended path: run `sentinel instrument pipeline.py` — it asks what you need and generates everything.
+
+Or add manually:
+
+> Replace `agent_a / agent_b / agent_c` with your agent names.
+> Replace field names in contracts with what your agent actually expects to receive.
 
 **Before**
 ```python
-import sentinel
-
 def run_pipeline(run_id, input_data):
-    output_a = agent_a(input_data)   # agent_a passes its output to agent_b
-    output_b = agent_b(output_a)     # agent_b passes its output to agent_c
+    output_a = agent_a(input_data)
+    output_b = agent_b(output_a)
     result   = agent_c(output_b)
     return result
 ```
 
 **After**
-
-> Lines starting with `+` are new. Copy without the `+`.
-> Replace `agent_a / agent_b / agent_c` with your agent names.
-> Replace field names in `accepts` with the fields your agent actually expects to receive.
-
 ```diff
- import sentinel
++from sentinel import Sentinel
++import sentinel
 +sentinel.init(api_key="sk_live_...")
 +
-+# Contract + Replay — define what each agent must receive
-+# Replace field names and types with what your agent actually expects
-+sentinel.register_contract(agent="agent_b", accepts={
++client = Sentinel(api_key="sk_live_...")
++client.register_contract(agent="agent_b", accepts={   # fields agent_b expects
 +    "field_1": {"type": "string", "required": True},
 +    "field_2": {"type": "number", "required": True},
 +})
-+sentinel.register_contract(agent="agent_c", accepts={
++client.register_contract(agent="agent_c", accepts={   # fields agent_c expects
 +    "field_3": {"type": "string", "required": True},
 +    "field_4": {"type": "number", "required": True},
 +})
 
  def run_pipeline(run_id, input_data):
++    import uuid; run_id = f"run_{uuid.uuid4().hex[:10]}"
 +    with sentinel.workflow("my_pipeline", run_id=run_id) as run:
 +
-+        # Tracing — wrap each agent in a traced step
-+        with run.step("agent_a", step_type="llm_call") as step:
++        with run.step("agent_a", step_type="llm_call") as step:   # Tracing
 +            step.set_input(input_data)
 +            output_a = agent_a(input_data)
 +            step.set_output(output_a)
-+
-+            # Shared State — write output so downstream agents can read it
-+            sentinel.propose_state_with_retry(run_id, "pipeline_state",
++            sentinel.propose_state_with_retry(run_id, "pipeline_state",  # Shared State
 +                lambda cur: {**(cur or {}), "agent_a_output": output_a})
 +
-+        # Contract + Replay — blocked here if output_a doesn't match agent_b's contract
-+        sentinel.handoff(from_agent="agent_a", to_agent="agent_b", run_id=run_id, payload=output_a)
++        client.record_step(run_id=run_id, step_name="agent_a", output=output_a)  # Contract check
 +
-+        with run.step("agent_b", step_type="llm_call") as step:
-+            prior, _ = sentinel.get_state(run_id, "pipeline_state")  # Shared State — read prior output
++        with run.step("agent_b", step_type="llm_call") as step:   # Tracing
++            prior, _ = sentinel.get_state(run_id, "pipeline_state")  # Shared State
 +            step.set_input(output_a)
 +            output_b = agent_b(output_a)
 +            step.set_output(output_b)
 +
-+        # Contract + Replay — blocked here if output_b doesn't match agent_c's contract
-+        sentinel.handoff(from_agent="agent_b", to_agent="agent_c", run_id=run_id, payload=output_b)
++        client.record_step(run_id=run_id, step_name="agent_b", output=output_b)  # Contract check
 +
-+        with run.step("agent_c", step_type="llm_call") as step:
++        with run.step("agent_c", step_type="llm_call") as step:   # Tracing
 +            step.set_input(output_b)
 +            result = agent_c(output_b)
 +            step.set_output(result)
-+
-+            # Shared State — write final result
-+            sentinel.propose_state_with_retry(run_id, "pipeline_state",
++            sentinel.propose_state_with_retry(run_id, "pipeline_state",  # Shared State
 +                lambda cur: {**(cur or {}), "final_result": result})
 +
 -    output_a = agent_a(input_data)
@@ -413,6 +423,8 @@ def run_pipeline(run_id, input_data):
 | **Traces** | Every step — status, latency, inputs, outputs |
 | **Incidents** | Any blocked handoff — reason, violated field, checkpoint to replay from |
 | **State** | Versioned writes from each agent — no data lost even if two agents write at once |
+
+→ [Full runnable example](pipeline.py)
 
 ```bash
 python pipeline.py --api-key sk_live_...
