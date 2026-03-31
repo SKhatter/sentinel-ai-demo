@@ -44,7 +44,33 @@ Adds step-by-step visibility into every step: status, latency, inputs, outputs. 
 
 > Lines starting with `+` are new. Copy without the `+`.
 
-### Option A — Decorator (1 line per function)
+### Option A — auto_instrument() — zero changes to existing code
+
+One line. Sentinel auto-detects which LLM SDKs are installed (openai, anthropic, langchain) and patches them all. No changes to your existing agent code. → [full example](examples/07_auto_instrument.py)
+
+**Before**
+```python
+import openai
+client = openai.OpenAI(api_key="...")
+response = client.chat.completions.create(model="gpt-4o", messages=[...])
+```
+
+**After**
+```diff
+ import openai
++import sentinel
++sentinel.auto_instrument(api_key="sk_live_...")   # detects openai, patches it automatically
++sentinel.set_active_run("run_001", "my_pipeline") # group all calls under one run
+
+ client = openai.OpenAI(api_key="...")
+ response = client.chat.completions.create(model="gpt-4o", messages=[...])
+```
+
+Works for anthropic and langchain too — same two lines, no other changes.
+
+---
+
+### Option B — Decorator (1 line per function) — best for custom/non-LLM-SDK agents
 
 → [full example](examples/01_decorator.py)
 
