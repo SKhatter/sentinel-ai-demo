@@ -1,139 +1,46 @@
 # Sentinel.AI — Integration Guide
 
-## What Sentinel Actually Does
-
-Sentinel helps teams run AI agent workflows safely.
-
-Instead of just showing what happened, Sentinel:
-
-- validates state passed between agents
-- blocks unsafe execution
-- surfaces the root cause
-- lets you replay from the exact failure point
-
-**Tracing shows the path. It does not prevent bad execution.**
-
----
-
 ## Install
 
 ```bash
 pip install sentinelai-sdk
 ```
 
-Both import names work:
-
 ```python
 import sentinel      # ✓
 import sentinelai   # ✓ also works
 ```
-
----
 
 ## Get an API key
 
 1. Go to **[www.agentsentinelai.com/dashboard](https://www.agentsentinelai.com/dashboard)**
 2. Click the **⚙️ gear icon** → enter a key name → **Generate Key**
 3. Copy the `sk_live_...` key — shown only once
-4. Paste it into Settings → **Save Key** to scope the dashboard to your data
+4. Paste it into Settings → **Save Key**
 
 > Free. No credit card required.
 
 ---
 
-## The Core Workflow — Start Here
+## Pick what you need
 
-### Contract + Replay
-
-Agent A emits invalid state → Sentinel blocks Agent B → you patch and replay safely.
-
-This is the most important integration. Use the tracing patterns below if you want to instrument an existing pipeline on top of this.
-
-**Before** — a typical pipeline with no safety checks
-
-```python
-def run_pipeline(query):
-    plan   = planner(query)     # planner can return anything
-    result = research(plan)     # research has no idea if plan is valid
-    output = executor(result)
-    return output
-```
-
-**After** — green lines are new additions, everything else is unchanged
-
-> Lines starting with `+` are new. Copy without the `+`.
-
-```diff
-+from sentinel import Sentinel   # import the Sentinel client
-+
-+client = Sentinel(api_key="sk_live_...")
-+
-+client.register_contract(        # define what planner must hand to research
-+    workflow_name="my_pipeline",
-+    from_step="planner",
-+    to_step="research",
-+    schema={
-+        "type": "object",
-+        "required": ["destination", "budget", "days"],
-+        "properties": {
-+            "destination": {"type": "string"},
-+            "budget":      {"type": "number"},
-+            "days":        {"type": "integer"}
-+        }
-+    },
-+    on_fail="block"
-+)
-+
- def run_pipeline(query):
-+    run = client.start_workflow(workflow_name="my_pipeline", input={"query": query})
-+
-     plan = planner(query)
-+
-+    result = client.record_step(run_id=run["run_id"], step_name="planner", output=plan)
-+    if result["boundary_check"]["result"] == "failed":   # Sentinel blocked research
-+        print("Blocked:", result["boundary_check"]["reason"])
-+        return
-+
-     result = research(plan)     # only reached if plan is valid
-     output = executor(result)
-     return output
-```
-
-→ [Runnable example](examples/06_v1_trip_planner.py)
-
-**What happens:**
-
-```
-Planner → invalid output → BLOCK
-              ↓
-         Fix + Replay
-              ↓
-Research → Executor → Success
-```
-
-**What you see in the dashboard:**
-
-| | Before replay | After replay |
+| I want to… | Feature | Dashboard tab |
 |---|---|---|
-| planner | completed | replayed |
-| research | blocked | completed |
-| executor | pending | completed |
-
-Incidents tab shows: `contract_violation` · reason · blocked transition · checkpoint ID.
+| See what my agents are doing — steps, inputs, outputs, latency | **Tracing** | Traces |
+| Block bad data from reaching the next agent, replay from failure | **Contract + Replay** | Incidents |
+| Let concurrent agents write shared state without overwriting each other | **Shared State** | State |
 
 ---
 
-## Tracing Patterns — Instrument Existing Code
+## 1. Tracing — See what your agents are doing
 
-Use these to add observability to a pipeline you already have.
+Adds step-by-step visibility. Nothing is blocked. Dashboard → **Traces** tab.
 
 > Lines starting with `+` are new. Copy without the `+`.
-
----
 
 ### Option A — Decorator (1 line per function)
 
-Best for standalone agent functions. → [full example](examples/01_decorator.py)
+→ [full example](examples/01_decorator.py)
 
 **Before**
 ```python
@@ -162,7 +69,7 @@ def research(plan: dict) -> dict:
 
 ### Option B — OpenAI auto-patch (4 lines total)
 
-Every `chat.completions.create()` call is traced automatically — no changes to call sites. → [full example](examples/02_openai_autopatch.py)
+Every `chat.completions.create()` call is traced automatically. → [full example](examples/02_openai_autopatch.py)
 
 **Before**
 ```python
@@ -179,7 +86,7 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 +sentinel.init(api_key="sk_live_...")
 
  client = openai.OpenAI(api_key="...")
-+sentinel.patch_openai(client)          # patches the client — all calls traced from here
++sentinel.patch_openai(client)          # all calls traced from here
 +sentinel.set_active_run("run_001", "my_pipeline")
 
  response = client.chat.completions.create(model="gpt-4o", messages=[...])
@@ -189,7 +96,7 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 
 ### Option C — Anthropic auto-patch (4 lines total)
 
-Same as OpenAI but for Anthropic's SDK. → [full example](examples/03_anthropic_autopatch.py)
+→ [full example](examples/03_anthropic_autopatch.py)
 
 **Before**
 ```python
@@ -206,7 +113,7 @@ response = client.messages.create(model="claude-opus-4-6", messages=[...])
 +sentinel.init(api_key="sk_live_...")
 
  client = anthropic.Anthropic(api_key="...")
-+sentinel.patch_anthropic(client)       # patches the client — all calls traced from here
++sentinel.patch_anthropic(client)       # all calls traced from here
 +sentinel.set_active_run("run_001", "my_pipeline")
 
  response = client.messages.create(model="claude-opus-4-6", messages=[...])
@@ -216,7 +123,7 @@ response = client.messages.create(model="claude-opus-4-6", messages=[...])
 
 ### Option D — LangChain callback (4 lines total)
 
-Every LLM call and chain step is traced automatically. → [full example](examples/04_langchain_callback.py)
+→ [full example](examples/04_langchain_callback.py)
 
 **Before**
 ```python
@@ -249,7 +156,7 @@ result = chain.run("my query")
 
 ### Option E — Wrap existing code (5–15 lines total)
 
-Full manual control. Best when you want to capture specific inputs/outputs. → [full example](examples/05_existing_code_minimal.py)
+Full control over what inputs/outputs are captured. → [full example](examples/05_existing_code_minimal.py)
 
 **Before**
 ```python
@@ -269,7 +176,7 @@ def run_pipeline(query):
 -    plan   = planner(query)
 -    result = research(plan)
 -    output = executor(result)
-+    with sentinel.workflow("my_pipeline") as run:   # creates a traced run
++    with sentinel.workflow("my_pipeline") as run:
 +        with run.step("planner", step_type="llm_call") as step:
 +            step.set_input({"query": query})
 +            plan = planner(query)
@@ -289,26 +196,105 @@ def run_pipeline(query):
 
 ---
 
-## Advanced — Shared State
+## 2. Contract + Replay — Block bad data, recover from failure
 
-Atomic writes across concurrent agents — no silent overwrites.
+Define what one agent must hand to the next. If the output is invalid, Sentinel blocks the downstream agent, creates an incident, and saves a checkpoint so you can fix and replay — without re-running the whole pipeline.
 
+Dashboard → **Incidents** tab · [Live demo](https://www.agentsentinelai.com/trip-planner)
+
+> Lines starting with `+` are new. Copy without the `+`.
+
+**Before**
 ```python
-# Read
-value, version = sentinel.get_state("run_id", "key")
-
-# Write with conflict protection
-new_version = sentinel.propose_state("run_id", "key", new_value, base_version=version)
-
-# Auto-retry on conflict
-sentinel.propose_state_with_retry("run_id", "key", lambda cur: {**cur, "new_field": "val"})
+def run_pipeline(query):
+    plan   = planner(query)
+    result = research(plan)
+    output = executor(result)
+    return output
 ```
+
+**After**
+```diff
++from sentinel import Sentinel
++
++client = Sentinel(api_key="sk_live_...")
++
++client.register_contract(        # define what planner must hand to research
++    workflow_name="my_pipeline",
++    from_step="planner",
++    to_step="research",
++    schema={
++        "type": "object",
++        "required": ["destination", "budget", "days"],
++        "properties": {
++            "destination": {"type": "string"},
++            "budget":      {"type": "number"},
++            "days":        {"type": "integer"}
++        }
++    },
++    on_fail="block"
++)
++
+ def run_pipeline(query):
++    run = client.start_workflow(workflow_name="my_pipeline", input={"query": query})
++
+     plan = planner(query)
++
++    result = client.record_step(run_id=run["run_id"], step_name="planner", output=plan)
++    if result["boundary_check"]["result"] == "failed":   # Sentinel blocked research
++        print("Blocked:", result["boundary_check"]["reason"])
++        return
++
+     result = research(plan)
+     output = executor(result)
+     return output
+```
+
+**What you see in the dashboard:**
+
+| Step | Bad run | After replay |
+|---|---|---|
+| planner | completed | replayed |
+| research | blocked | completed |
+| executor | pending | completed |
+
+Incidents tab shows: type · reason · blocked transition · checkpoint ID.
+
+→ [Runnable example](examples/06_v1_trip_planner.py)
+
+---
+
+## 3. Shared State — Safe concurrent writes
+
+Multiple agents writing the same key simultaneously without data loss. Uses optimistic locking — each write includes the version it read; conflicts are detected and retried.
+
+Dashboard → **State** tab
+
+**Before** — two agents race to update the same key; one write is silently lost
+```python
+state["lead"] = {"score": 0.87}       # agent-a
+state["lead"] = {"tone": "positive"}  # agent-b — overwrites agent-a
+```
+
+**After**
+```python
+# agent-a
+value, version = sentinel.get_state(run_id, "lead")
+sentinel.propose_state(run_id, "lead", {"score": 0.87}, base_version=version)
+
+# agent-b — auto-retries if agent-a wrote first, merges instead of overwriting
+sentinel.propose_state_with_retry(run_id, "lead", lambda cur: {**cur, "tone": "positive"})
+```
+
+→ [Runnable example](examples/demo_state_conflict.py)
 
 ---
 
 ## Curl Reference
 
-**Create a workflow run**
+> Replace `https://www.agentsentinelai.com` with `http://localhost:3001` if running locally.
+
+**Create a run**
 ```bash
 curl -X POST https://www.agentsentinelai.com/v1/workflows/runs \
   -H "Content-Type: application/json" \
@@ -335,7 +321,7 @@ curl -X POST https://www.agentsentinelai.com/v1/contracts \
   }'
 ```
 
-**Emit a step**
+**Record a step**
 ```bash
 curl -X POST https://www.agentsentinelai.com/v1/workflows/runs/{run_id}/steps \
   -H "Content-Type: application/json" \
@@ -351,25 +337,6 @@ curl -X POST https://www.agentsentinelai.com/v1/replays \
        "patched_output": {"destination": "Japan", "budget": 2000, "days": 5}}'
 ```
 
-> Replace `https://www.agentsentinelai.com` with `http://localhost:3001` if running locally.
-
----
-
-## When To Use Sentinel
-
-Use Sentinel if:
-
-- you run multi-step agent workflows
-- agents pass structured state to each other
-- failures happen several steps later
-- you want to prevent bad execution, not just debug it
-
-You don't need Sentinel if:
-
-- you only run single LLM calls
-- workflows are simple and stateless
-- failures don't have downstream side effects
-
 ---
 
 ## Run Locally
@@ -380,7 +347,7 @@ cd sentinel-ai && npm install && node server.js
 # → http://localhost:3001
 ```
 
-Data is in-memory when running locally — resets on restart. The hosted dashboard at [agentsentinelai.com](https://www.agentsentinelai.com) persists data via Redis.
+Data resets on restart. The hosted dashboard at [agentsentinelai.com](https://www.agentsentinelai.com) persists via Redis.
 
 ---
 
