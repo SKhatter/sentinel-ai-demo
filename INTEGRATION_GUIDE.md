@@ -128,7 +128,7 @@ Incidents tab shows: `contract_violation` · reason · blocked transition · che
 ## Tracing Patterns — Instrument Existing Code
 
 Use these to add observability to a pipeline you already have.
-All patterns produce the same output: step latency, input/output payloads, automatic incidents on failure.
+Each pattern shows your **original code** and exactly what changes.
 
 ---
 
@@ -136,30 +136,56 @@ All patterns produce the same output: step latency, input/output payloads, autom
 
 Best for standalone agent functions. → [full example](examples/01_decorator.py)
 
+**Before**
 ```python
-import sentinel
-sentinel.init(api_key="sk_live_...")
-
-@sentinel.trace_step(name="planner", step_type="llm_call", workflow_name="trip_planner")
 def planner(query: str) -> dict:
-    return my_llm.run(query)   # unchanged
+    return my_llm.run(query)
+
+def research(plan: dict) -> dict:
+    return my_llm.run(plan)
+```
+
+**After** — add 2 lines at the top, 1 decorator per function
+```python
+import sentinel                                                        # + line 1
+sentinel.init(api_key="sk_live_...")                                   # + line 2
+
+@sentinel.trace_step(name="planner", step_type="llm_call",            # + decorator
+                     workflow_name="my_pipeline")
+def planner(query: str) -> dict:
+    return my_llm.run(query)                                          # unchanged
+
+@sentinel.trace_step(name="research", step_type="llm_call",           # + decorator
+                     workflow_name="my_pipeline")
+def research(plan: dict) -> dict:
+    return my_llm.run(plan)                                           # unchanged
 ```
 
 ---
 
 ### Option B — OpenAI auto-patch (2 lines total)
 
-Every `chat.completions.create()` call is traced automatically. → [full example](examples/02_openai_autopatch.py)
+Every `chat.completions.create()` call is traced automatically — no changes to call sites. → [full example](examples/02_openai_autopatch.py)
 
+**Before**
 ```python
-import openai, sentinel
-sentinel.init(api_key="sk_live_...")
+import openai
 
 client = openai.OpenAI(api_key="...")
-sentinel.patch_openai(client)          # ONE LINE
-sentinel.set_active_run("run_001", "trip_planner")
-
 response = client.chat.completions.create(model="gpt-4o", messages=[...])
+```
+
+**After** — add 3 lines after creating the client, nothing else changes
+```python
+import openai
+import sentinel                                                        # + line 1
+sentinel.init(api_key="sk_live_...")                                   # + line 2
+
+client = openai.OpenAI(api_key="...")
+sentinel.patch_openai(client)                                         # + line 3
+sentinel.set_active_run("run_001", "my_pipeline")                     # + line 4
+
+response = client.chat.completions.create(model="gpt-4o", messages=[...])  # unchanged
 ```
 
 ---
@@ -168,55 +194,95 @@ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 
 Same as OpenAI but for Anthropic's SDK. → [full example](examples/03_anthropic_autopatch.py)
 
+**Before**
 ```python
-import anthropic, sentinel
-sentinel.init(api_key="sk_live_...")
+import anthropic
 
 client = anthropic.Anthropic(api_key="...")
-sentinel.patch_anthropic(client)       # ONE LINE
-sentinel.set_active_run("run_001", "trip_planner")
+response = client.messages.create(model="claude-opus-4-6", messages=[...])
+```
 
-response = client.messages.create(model="claude-opus-4-6", ...)
+**After** — add 3 lines after creating the client
+```python
+import anthropic
+import sentinel                                                        # + line 1
+sentinel.init(api_key="sk_live_...")                                   # + line 2
+
+client = anthropic.Anthropic(api_key="...")
+sentinel.patch_anthropic(client)                                      # + line 3
+sentinel.set_active_run("run_001", "my_pipeline")                     # + line 4
+
+response = client.messages.create(model="claude-opus-4-6", messages=[...])  # unchanged
 ```
 
 ---
 
 ### Option D — LangChain callback (1 line total)
 
-Every LLM call, chain step, and tool use is traced automatically. → [full example](examples/04_langchain_callback.py)
+Every LLM call and chain step is traced automatically. → [full example](examples/04_langchain_callback.py)
 
+**Before**
 ```python
-import sentinel
-sentinel.init(api_key="sk_live_...")
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import LLMChain
 
-cb = sentinel.LangChainCallback(workflow_name="trip_planner")  # ONE LINE
-
-llm   = ChatOpenAI(model="gpt-4o", callbacks=[cb])
-chain = LLMChain(llm=llm, prompt=prompt, callbacks=[cb])
+llm   = ChatOpenAI(model="gpt-4o")
+chain = LLMChain(llm=llm, prompt=prompt)
 result = chain.run("my query")
-cb.finish()
+```
+
+**After** — create one callback, pass it to your existing components
+```python
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import LLMChain
+import sentinel                                                        # + line 1
+sentinel.init(api_key="sk_live_...")                                   # + line 2
+
+cb = sentinel.LangChainCallback(workflow_name="my_pipeline")          # + line 3
+
+llm   = ChatOpenAI(model="gpt-4o", callbacks=[cb])                    # + callbacks=[cb]
+chain = LLMChain(llm=llm, prompt=prompt, callbacks=[cb])              # + callbacks=[cb]
+result = chain.run("my query")                                        # unchanged
+cb.finish()                                                           # + line 4
 ```
 
 ---
 
 ### Option E — Wrap existing code (5–15 lines total)
 
-Full manual control over what gets traced. → [full example](examples/05_existing_code_minimal.py)
+Full manual control. Best when you want to capture specific inputs/outputs. → [full example](examples/05_existing_code_minimal.py)
 
+**Before**
 ```python
-import sentinel
-sentinel.init(api_key="sk_live_...")
+def run_pipeline(query):
+    plan   = planner(query)
+    result = research(plan)
+    output = executor(result)
+    return output
+```
 
-with sentinel.workflow("trip_planner") as run:
-    with run.step("planner", step_type="llm_call") as step:
-        step.set_input({"query": "..."})
-        result = planner.run(query)        # unchanged
-        step.set_output({"result": result})
+**After** — wrap in `sentinel.workflow`, add `run.step` around each agent call
+```python
+import sentinel                                                        # + line 1
+sentinel.init(api_key="sk_live_...")                                   # + line 2
 
-    with run.step("research", step_type="llm_call") as step:
-        step.set_input({"plan": result})
-        output = research.run(result)      # unchanged
-        step.set_output({"output": output})
+def run_pipeline(query):
+    with sentinel.workflow("my_pipeline") as run:                     # + wrap
+        with run.step("planner", step_type="llm_call") as step:       # + wrap
+            step.set_input({"query": query})                          # + optional
+            plan = planner(query)                                     # unchanged
+            step.set_output({"plan": plan})                           # + optional
+
+        with run.step("research", step_type="llm_call") as step:      # + wrap
+            step.set_input({"plan": plan})                            # + optional
+            result = research(plan)                                   # unchanged
+            step.set_output({"result": result})                       # + optional
+
+        with run.step("executor", step_type="tool_call") as step:     # + wrap
+            output = executor(result)                                 # unchanged
+            step.set_output({"output": output})                       # + optional
+
+    return output
 ```
 
 ---
