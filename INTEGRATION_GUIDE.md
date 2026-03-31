@@ -254,6 +254,8 @@ def run_pipeline(query):
 
 ## 2. Contract + Replay — Block bad data, recover from failure
 
+**Quickest way:** `sentinel instrument pipeline.py` — asks for field names and generates this code automatically.
+
 **Use when:** agents pass structured data to each other and a bad payload reaching the next agent causes real damage — wasted compute, wrong emails sent, corrupted state.
 
 **Skip when:** agents are independent, don't hand off structured data, or failures are cheap to re-run from scratch.
@@ -321,6 +323,8 @@ def run_pipeline(query):
 ---
 
 ## 3. Shared State — Safe concurrent writes
+
+**Quickest way:** `sentinel instrument pipeline.py` — asks if agents run concurrently and inserts the state calls automatically.
 
 **Use when:** two or more agents run in parallel and write to the same key.
 
