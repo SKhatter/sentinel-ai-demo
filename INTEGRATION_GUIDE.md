@@ -59,45 +59,44 @@ def run_pipeline(query):
     return output
 ```
 
-**After** — Sentinel validates the boundary before research ever runs
+**After** — green lines are new additions, everything else is unchanged
 
-```python
-from sentinel import Sentinel                                          # ← add
+> Lines starting with `+` are new. Copy without the `+`.
 
-client = Sentinel(api_key="sk_live_...")                              # ← add
-
-# Register once — what planner must pass to research                  # ← add
-client.register_contract(                                             # ← add
-    workflow_name="my_pipeline",                                      # ← add
-    from_step="planner",                                              # ← add
-    to_step="research",                                               # ← add
-    schema={                                                          # ← add
-        "type": "object",                                             # ← add
-        "required": ["destination", "budget", "days"],                # ← add
-        "properties": {                                               # ← add
-            "destination": {"type": "string"},                        # ← add
-            "budget":      {"type": "number"},                        # ← add
-            "days":        {"type": "integer"}                        # ← add
-        }                                                             # ← add
-    },                                                                # ← add
-    on_fail="block"                                                   # ← add
-)                                                                     # ← add
-
-def run_pipeline(query):
-    run = client.start_workflow(workflow_name="my_pipeline",          # ← add
-                                input={"query": query})               # ← add
-
-    plan = planner(query)
-
-    result = client.record_step(                                      # ← add
-        run_id=run["run_id"], step_name="planner", output=plan)       # ← add
-    if result["boundary_check"]["result"] == "failed":                # ← add
-        print("Blocked:", result["boundary_check"]["reason"])         # ← add
-        return                                                        # ← add
-
-    result = research(plan)     # only reached if plan is valid
-    output = executor(result)
-    return output
+```diff
++from sentinel import Sentinel   # import the Sentinel client
++
++client = Sentinel(api_key="sk_live_...")
++
++client.register_contract(        # define what planner must hand to research
++    workflow_name="my_pipeline",
++    from_step="planner",
++    to_step="research",
++    schema={
++        "type": "object",
++        "required": ["destination", "budget", "days"],
++        "properties": {
++            "destination": {"type": "string"},
++            "budget":      {"type": "number"},
++            "days":        {"type": "integer"}
++        }
++    },
++    on_fail="block"
++)
++
+ def run_pipeline(query):
++    run = client.start_workflow(workflow_name="my_pipeline", input={"query": query})
++
+     plan = planner(query)
++
++    result = client.record_step(run_id=run["run_id"], step_name="planner", output=plan)
++    if result["boundary_check"]["result"] == "failed":   # Sentinel blocked research
++        print("Blocked:", result["boundary_check"]["reason"])
++        return
++
+     result = research(plan)     # only reached if plan is valid
+     output = executor(result)
+     return output
 ```
 
 → [Runnable example](examples/06_v1_trip_planner.py)
@@ -127,7 +126,8 @@ Incidents tab shows: `contract_violation` · reason · blocked transition · che
 ## Tracing Patterns — Instrument Existing Code
 
 Use these to add observability to a pipeline you already have.
-Each pattern shows your **original code** and exactly what changes.
+
+> Lines starting with `+` are new. Copy without the `+`.
 
 ---
 
@@ -144,26 +144,23 @@ def research(plan: dict) -> dict:
     return my_llm.run(plan)
 ```
 
-**After** — add 2 lines at the top, 1 decorator per function
+**After**
+```diff
++import sentinel
++sentinel.init(api_key="sk_live_...")
++
++@sentinel.trace_step(name="planner", step_type="llm_call", workflow_name="my_pipeline")
+ def planner(query: str) -> dict:
+     return my_llm.run(query)
 
-```python
-import sentinel                                                       # ← add
-sentinel.init(api_key="sk_live_...")                                  # ← add
-
-@sentinel.trace_step(name="planner", step_type="llm_call",           # ← add
-                     workflow_name="my_pipeline")                     # ← add
-def planner(query: str) -> dict:
-    return my_llm.run(query)
-
-@sentinel.trace_step(name="research", step_type="llm_call",          # ← add
-                     workflow_name="my_pipeline")                     # ← add
-def research(plan: dict) -> dict:
-    return my_llm.run(plan)
++@sentinel.trace_step(name="research", step_type="llm_call", workflow_name="my_pipeline")
+ def research(plan: dict) -> dict:
+     return my_llm.run(plan)
 ```
 
 ---
 
-### Option B — OpenAI auto-patch (2 lines total)
+### Option B — OpenAI auto-patch (4 lines total)
 
 Every `chat.completions.create()` call is traced automatically — no changes to call sites. → [full example](examples/02_openai_autopatch.py)
 
@@ -175,23 +172,22 @@ client = openai.OpenAI(api_key="...")
 response = client.chat.completions.create(model="gpt-4o", messages=[...])
 ```
 
-**After** — add 4 lines, nothing else changes
+**After**
+```diff
+ import openai
++import sentinel
++sentinel.init(api_key="sk_live_...")
 
-```python
-import openai
-import sentinel                                                       # ← add
-sentinel.init(api_key="sk_live_...")                                  # ← add
+ client = openai.OpenAI(api_key="...")
++sentinel.patch_openai(client)          # patches the client — all calls traced from here
++sentinel.set_active_run("run_001", "my_pipeline")
 
-client = openai.OpenAI(api_key="...")
-sentinel.patch_openai(client)                                        # ← add
-sentinel.set_active_run("run_001", "my_pipeline")                    # ← add
-
-response = client.chat.completions.create(model="gpt-4o", messages=[...])
+ response = client.chat.completions.create(model="gpt-4o", messages=[...])
 ```
 
 ---
 
-### Option C — Anthropic auto-patch (2 lines total)
+### Option C — Anthropic auto-patch (4 lines total)
 
 Same as OpenAI but for Anthropic's SDK. → [full example](examples/03_anthropic_autopatch.py)
 
@@ -203,23 +199,22 @@ client = anthropic.Anthropic(api_key="...")
 response = client.messages.create(model="claude-opus-4-6", messages=[...])
 ```
 
-**After** — add 4 lines, nothing else changes
+**After**
+```diff
+ import anthropic
++import sentinel
++sentinel.init(api_key="sk_live_...")
 
-```python
-import anthropic
-import sentinel                                                       # ← add
-sentinel.init(api_key="sk_live_...")                                  # ← add
+ client = anthropic.Anthropic(api_key="...")
++sentinel.patch_anthropic(client)       # patches the client — all calls traced from here
++sentinel.set_active_run("run_001", "my_pipeline")
 
-client = anthropic.Anthropic(api_key="...")
-sentinel.patch_anthropic(client)                                     # ← add
-sentinel.set_active_run("run_001", "my_pipeline")                    # ← add
-
-response = client.messages.create(model="claude-opus-4-6", messages=[...])
+ response = client.messages.create(model="claude-opus-4-6", messages=[...])
 ```
 
 ---
 
-### Option D — LangChain callback (1 line total)
+### Option D — LangChain callback (4 lines total)
 
 Every LLM call and chain step is traced automatically. → [full example](examples/04_langchain_callback.py)
 
@@ -233,20 +228,21 @@ chain = LLMChain(llm=llm, prompt=prompt)
 result = chain.run("my query")
 ```
 
-**After** — add 4 lines, pass `callbacks=[cb]` to existing components
+**After**
+```diff
+ from langchain.chat_models import ChatOpenAI
+ from langchain.chains import LLMChain
++import sentinel
++sentinel.init(api_key="sk_live_...")
 
-```python
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import LLMChain
-import sentinel                                                       # ← add
-sentinel.init(api_key="sk_live_...")                                  # ← add
++cb = sentinel.LangChainCallback(workflow_name="my_pipeline")
 
-cb = sentinel.LangChainCallback(workflow_name="my_pipeline")         # ← add
-
-llm   = ChatOpenAI(model="gpt-4o", callbacks=[cb])                   # ← add callbacks=[cb]
-chain = LLMChain(llm=llm, prompt=prompt, callbacks=[cb])             # ← add callbacks=[cb]
-result = chain.run("my query")
-cb.finish()                                                          # ← add
+-llm   = ChatOpenAI(model="gpt-4o")
+-chain = LLMChain(llm=llm, prompt=prompt)
++llm   = ChatOpenAI(model="gpt-4o", callbacks=[cb])
++chain = LLMChain(llm=llm, prompt=prompt, callbacks=[cb])
+ result = chain.run("my query")
++cb.finish()
 ```
 
 ---
@@ -264,29 +260,31 @@ def run_pipeline(query):
     return output
 ```
 
-**After** — wrap each agent call in `run.step`
+**After**
+```diff
++import sentinel
++sentinel.init(api_key="sk_live_...")
 
-```python
-import sentinel                                                       # ← add
-sentinel.init(api_key="sk_live_...")                                  # ← add
-
-def run_pipeline(query):
-    with sentinel.workflow("my_pipeline") as run:                    # ← add
-        with run.step("planner", step_type="llm_call") as step:      # ← add
-            step.set_input({"query": query})                         # ← add
-            plan = planner(query)
-            step.set_output({"plan": plan})                          # ← add
-
-        with run.step("research", step_type="llm_call") as step:     # ← add
-            step.set_input({"plan": plan})                           # ← add
-            result = research(plan)
-            step.set_output({"result": result})                      # ← add
-
-        with run.step("executor", step_type="tool_call") as step:    # ← add
-            output = executor(result)
-            step.set_output({"output": output})                      # ← add
-
-    return output
+ def run_pipeline(query):
+-    plan   = planner(query)
+-    result = research(plan)
+-    output = executor(result)
++    with sentinel.workflow("my_pipeline") as run:   # creates a traced run
++        with run.step("planner", step_type="llm_call") as step:
++            step.set_input({"query": query})
++            plan = planner(query)
++            step.set_output({"plan": plan})
++
++        with run.step("research", step_type="llm_call") as step:
++            step.set_input({"plan": plan})
++            result = research(plan)
++            step.set_output({"result": result})
++
++        with run.step("executor", step_type="tool_call") as step:
++            output = executor(result)
++            step.set_output({"output": output})
++
+     return output
 ```
 
 ---
