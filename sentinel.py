@@ -764,6 +764,208 @@ def patch_anthropic(client, workflow_name: str = None, agent_name: str = None):
     client.messages.create = traced_create
 
 
+def auto_instrument(api_key: str = None, workflow_name: str = "Pipeline",
+                    endpoint: str = "https://www.agentsentinelai.com"):
+    """
+    Auto-detect installed LLM SDKs and patch them all in one call.
+    Supports: openai, anthropic, langchain.
+
+    Patches at the class level — any client created before or after this call
+    is traced automatically. No changes to existing code needed.
+
+    Usage:
+        import sentinel
+        sentinel.auto_instrument(api_key="sk_live_...")
+
+        # Everything below is unchanged — all LLM calls traced automatically
+        client = openai.OpenAI(api_key="...")
+        response = client.chat.completions.create(model="gpt-4o", messages=[...])
+
+    Returns:
+        List of SDK names that were successfully patched.
+    """
+    if api_key:
+        init(api_key=api_key, endpoint=endpoint)
+
+    patched = []
+
+    # ── OpenAI ───────────────────────────────────────────────────────────────
+    try:
+        from openai.resources.chat.completions import Completions as _OACompletions
+        _orig_oai = _OACompletions.create
+
+        @functools.wraps(_orig_oai)
+        def _traced_oai(self, *args, **kwargs):
+            run_id, wf_name = _get_active_run()
+            wf_name = workflow_name or wf_name
+            model = kwargs.get('model', 'unknown')
+            name = f"openai/{model}"
+            step_id = f"step_{uuid.uuid4().hex[:12]}"
+            started = _now()
+            t0 = time.time()
+            messages = kwargs.get('messages', [])
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                             "status": "running", "started_at": started})
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id, "step_name": name,
+                "step_type": "llm_call", "status": "running", "started_at": started,
+                "input": {"messages": len(messages), "model": model,
+                          "last_user_msg": next((m['content'][:200] for m in reversed(messages)
+                                                 if m.get('role') == 'user'), None)}
+            })
+            try:
+                result = _orig_oai(self, *args, **kwargs)
+                duration_ms = int((time.time() - t0) * 1000)
+                usage = getattr(result, 'usage', None)
+                output = {"model": model,
+                          "finish_reason": result.choices[0].finish_reason if result.choices else None}
+                if usage:
+                    output.update({"prompt_tokens": usage.prompt_tokens,
+                                   "completion_tokens": usage.completion_tokens,
+                                   "total_tokens": usage.total_tokens})
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "success", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms, "output": output
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "completed"})
+                return result
+            except Exception as e:
+                duration_ms = int((time.time() - t0) * 1000)
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "failed", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms, "error": str(e)
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "failed"})
+                raise
+
+        _OACompletions.create = _traced_oai
+        patched.append("openai")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # ── Anthropic ────────────────────────────────────────────────────────────
+    try:
+        from anthropic.resources.messages import Messages as _ANMessages
+        _orig_anth = _ANMessages.create
+
+        @functools.wraps(_orig_anth)
+        def _traced_anth(self, *args, **kwargs):
+            run_id, wf_name = _get_active_run()
+            wf_name = workflow_name or wf_name
+            model = kwargs.get('model', 'unknown')
+            name = f"anthropic/{model}"
+            step_id = f"step_{uuid.uuid4().hex[:12]}"
+            started = _now()
+            t0 = time.time()
+            messages = kwargs.get('messages', [])
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                             "status": "running", "started_at": started})
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id, "step_name": name,
+                "step_type": "llm_call", "status": "running", "started_at": started,
+                "input": {"messages": len(messages), "model": model,
+                          "last_user_msg": next((m['content'][:200] for m in reversed(messages)
+                                                 if isinstance(m.get('content'), str)
+                                                 and m.get('role') == 'user'), None)}
+            })
+            try:
+                result = _orig_anth(self, *args, **kwargs)
+                duration_ms = int((time.time() - t0) * 1000)
+                usage = getattr(result, 'usage', None)
+                output = {"model": model, "stop_reason": getattr(result, 'stop_reason', None)}
+                if usage:
+                    output.update({"input_tokens": getattr(usage, 'input_tokens', None),
+                                   "output_tokens": getattr(usage, 'output_tokens', None)})
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "success", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms, "output": output
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "completed"})
+                return result
+            except Exception as e:
+                duration_ms = int((time.time() - t0) * 1000)
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "failed", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms, "error": str(e)
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "failed"})
+                raise
+
+        _ANMessages.create = _traced_anth
+        patched.append("anthropic")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # ── LangChain ────────────────────────────────────────────────────────────
+    try:
+        from langchain_core.language_models.base import BaseLanguageModel as _BaseLLM
+        _orig_lc = _BaseLLM.invoke
+
+        @functools.wraps(_orig_lc)
+        def _traced_lc(self, input, *args, **kwargs):
+            run_id, wf_name = _get_active_run()
+            wf_name = workflow_name or wf_name
+            name = f"langchain/{type(self).__name__}"
+            step_id = f"step_{uuid.uuid4().hex[:12]}"
+            started = _now()
+            t0 = time.time()
+            _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                             "status": "running", "started_at": started})
+            _post_async("/api/ingest/step", {
+                "run_id": run_id, "step_id": step_id, "step_name": name,
+                "step_type": "llm_call", "status": "running", "started_at": started,
+                "input": {"input": str(input)[:200]}
+            })
+            try:
+                result = _orig_lc(self, input, *args, **kwargs)
+                duration_ms = int((time.time() - t0) * 1000)
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "success", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms,
+                    "output": {"response": str(result)[:500]}
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "completed"})
+                return result
+            except Exception as e:
+                duration_ms = int((time.time() - t0) * 1000)
+                _post_async("/api/ingest/step", {
+                    "run_id": run_id, "step_id": step_id, "step_name": name,
+                    "step_type": "llm_call", "status": "failed", "started_at": started,
+                    "completed_at": _now(), "duration_ms": duration_ms, "error": str(e)
+                })
+                _post_async("/api/ingest/run", {"run_id": run_id, "workflow_name": wf_name,
+                                                 "status": "failed"})
+                raise
+
+        _BaseLLM.invoke = _traced_lc
+        patched.append("langchain")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    if patched:
+        print(f"[sentinel] auto_instrument: patched {', '.join(patched)}")
+    else:
+        print("[sentinel] auto_instrument: no supported SDKs found (openai, anthropic, langchain)")
+
+    return patched
+
+
 def _make_langchain_base():
     """Return BaseCallbackHandler if LangChain is installed, else object."""
     try:
