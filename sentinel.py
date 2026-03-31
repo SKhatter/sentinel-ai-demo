@@ -30,6 +30,25 @@ import functools
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
+# ── Version check ──────────────────────────────────────────────────────────────
+
+__version__ = "0.1.5"
+
+def _check_version():
+    """Check PyPI for a newer version. Runs in background, never blocks."""
+    try:
+        import urllib.request as _ur
+        import json as _j
+        with _ur.urlopen("https://pypi.org/pypi/sentinelai-sdk/json", timeout=3) as r:
+            latest = _j.loads(r.read())["info"]["version"]
+        if latest != __version__:
+            print(
+                f"[sentinel] Update available: {__version__} → {latest}. "
+                f"Run: pip install --upgrade sentinelai-sdk"
+            )
+    except Exception:
+        pass  # never fail silently — version check is best-effort
+
 try:
     import requests as _requests
     _has_requests = True
@@ -61,6 +80,7 @@ def init(api_key: str, endpoint: str = "https://www.agentsentinelai.com", timeou
     _config["endpoint"] = endpoint.rstrip("/")
     _config["timeout"] = timeout
     _config["enabled"] = True
+    threading.Thread(target=_check_version, daemon=True).start()
 
 
 def disable():
