@@ -306,33 +306,93 @@ sentinel.propose_state_with_retry(run_id, "lead", lambda cur: {**cur, "tone": "p
 
 ## Using all three together
 
-A production pipeline typically uses all three:
+→ [Full runnable example](pipeline.py) — 3-agent customer outreach pipeline using all three features.
 
-```
-Research Agent
-  → traces each step                          (Tracing)
-  → writes best lead to shared state          (Shared State)
-  → hands off lead to Personalize Agent
-      └─ contract validates the payload       (Contract + Replay)
+**Before**
+```python
+import sentinel
 
-Personalize Agent
-  → reads lead from shared state              (Shared State)
-  → traces each step                          (Tracing)
-  → hands off email draft to Deliver Agent
-      └─ contract validates the payload       (Contract + Replay)
-
-Deliver Agent
-  → traces each step                          (Tracing)
-  → writes outcome to shared state            (Shared State)
+def run_pipeline(run_id, companies):
+    leads  = [research(company) for company in companies]
+    best   = max(leads, key=lambda x: x["score"])
+    email  = personalize(best)
+    result = deliver(email)
+    return result
 ```
 
-→ [Full runnable example](pipeline.py) — a 3-agent customer outreach pipeline using all three features end to end.
+**After**
+
+> Lines starting with `+` are new. Copy without the `+`.
+
+```diff
+ import sentinel
++sentinel.init(api_key="sk_live_...")
++
++# Contract + Replay — define what each agent must receive
++sentinel.register_contract(agent="personalize-agent", accepts={
++    "lead_id": {"type": "string", "required": True},
++    "company": {"type": "string", "required": True},
++    "score":   {"type": "number", "min": 0, "max": 1},
++})
++sentinel.register_contract(agent="deliver-agent", accepts={
++    "email_draft": {"type": "string", "required": True},
++    "subject":     {"type": "string", "required": True},
++    "to_company":  {"type": "string", "required": True},
++})
+
+ def run_pipeline(run_id, companies):
+-    leads  = [research(company) for company in companies]
+-    best   = max(leads, key=lambda x: x["score"])
+-    email  = personalize(best)
+-    result = deliver(email)
++    with sentinel.workflow("outreach", run_id=run_id) as run:
++
++        # Tracing — wrap each agent in a traced step
++        with run.step("research-agent", step_type="llm_call") as step:
++            step.set_input({"companies": companies})
++            leads = [research(company) for company in companies]
++            best  = max(leads, key=lambda x: x["score"])
++            step.set_output({"best_lead": best["company"], "score": best["score"]})
++
++            # Shared State — write results so other agents can read them
++            sentinel.propose_state_with_retry(run_id, "leads", lambda cur: {**(cur or {}), "best": best})
++
++        # Contract + Replay — blocked here if best doesn't match the contract
++        sentinel.handoff(from_agent="research-agent", to_agent="personalize-agent",
++                         run_id=run_id, payload=best)
++
++        with run.step("personalize-agent", step_type="llm_call") as step:
++            context, _ = sentinel.get_state(run_id, "leads")  # Shared State — read prior results
++            step.set_input({"lead": best})
++            email = personalize(best)
++            step.set_output({"subject": email["subject"]})
++
++        # Contract + Replay — blocked here if email doesn't match the contract
++        sentinel.handoff(from_agent="personalize-agent", to_agent="deliver-agent",
++                         run_id=run_id, payload=email)
++
++        with run.step("deliver-agent", step_type="notification") as step:
++            step.set_input({"to_company": email["to_company"]})
++            result = deliver(email)
++            step.set_output(result)
++
++            # Shared State — record delivery outcome
++            sentinel.propose_state_with_retry(run_id, "leads", lambda cur: {**(cur or {}), "delivery": result})
++
+     return result
+```
+
+**What you see in the dashboard:**
+
+| Tab | What appears |
+|---|---|
+| **Traces** | Every step — status, latency, inputs, outputs |
+| **Incidents** | Any blocked handoff — reason, violated field, checkpoint to replay from |
+| **State** | Versioned writes from each agent — no data lost even if two agents write at once |
 
 ```bash
 python pipeline.py --api-key sk_live_...
 ```
-
-Dashboard shows: steps in **Traces**, blocked handoffs in **Incidents**, agent writes in **State**.
 
 ---
 
