@@ -312,73 +312,71 @@ sentinel.propose_state_with_retry(run_id, "lead", lambda cur: {**cur, "tone": "p
 ```python
 import sentinel
 
-def run_pipeline(run_id, companies):
-    leads  = [research(company) for company in companies]
-    best   = max(leads, key=lambda x: x["score"])
-    email  = personalize(best)
-    result = deliver(email)
+def run_pipeline(run_id, input_data):
+    output_a = agent_a(input_data)   # agent_a passes its output to agent_b
+    output_b = agent_b(output_a)     # agent_b passes its output to agent_c
+    result   = agent_c(output_b)
     return result
 ```
 
 **After**
 
 > Lines starting with `+` are new. Copy without the `+`.
+> Replace `agent_a / agent_b / agent_c` with your agent names.
+> Replace field names in `accepts` with the fields your agent actually expects to receive.
 
 ```diff
  import sentinel
 +sentinel.init(api_key="sk_live_...")
 +
 +# Contract + Replay — define what each agent must receive
-+sentinel.register_contract(agent="personalize-agent", accepts={
-+    "lead_id": {"type": "string", "required": True},
-+    "company": {"type": "string", "required": True},
-+    "score":   {"type": "number", "min": 0, "max": 1},
++# Replace field names and types with what your agent actually expects
++sentinel.register_contract(agent="agent_b", accepts={
++    "field_1": {"type": "string", "required": True},
++    "field_2": {"type": "number", "required": True},
 +})
-+sentinel.register_contract(agent="deliver-agent", accepts={
-+    "email_draft": {"type": "string", "required": True},
-+    "subject":     {"type": "string", "required": True},
-+    "to_company":  {"type": "string", "required": True},
++sentinel.register_contract(agent="agent_c", accepts={
++    "field_3": {"type": "string", "required": True},
++    "field_4": {"type": "number", "required": True},
 +})
 
- def run_pipeline(run_id, companies):
--    leads  = [research(company) for company in companies]
--    best   = max(leads, key=lambda x: x["score"])
--    email  = personalize(best)
--    result = deliver(email)
-+    with sentinel.workflow("outreach", run_id=run_id) as run:
+ def run_pipeline(run_id, input_data):
++    with sentinel.workflow("my_pipeline", run_id=run_id) as run:
 +
 +        # Tracing — wrap each agent in a traced step
-+        with run.step("research-agent", step_type="llm_call") as step:
-+            step.set_input({"companies": companies})
-+            leads = [research(company) for company in companies]
-+            best  = max(leads, key=lambda x: x["score"])
-+            step.set_output({"best_lead": best["company"], "score": best["score"]})
++        with run.step("agent_a", step_type="llm_call") as step:
++            step.set_input(input_data)
++            output_a = agent_a(input_data)
++            step.set_output(output_a)
 +
-+            # Shared State — write results so other agents can read them
-+            sentinel.propose_state_with_retry(run_id, "leads", lambda cur: {**(cur or {}), "best": best})
++            # Shared State — write output so downstream agents can read it
++            sentinel.propose_state_with_retry(run_id, "pipeline_state",
++                lambda cur: {**(cur or {}), "agent_a_output": output_a})
 +
-+        # Contract + Replay — blocked here if best doesn't match the contract
-+        sentinel.handoff(from_agent="research-agent", to_agent="personalize-agent",
-+                         run_id=run_id, payload=best)
++        # Contract + Replay — blocked here if output_a doesn't match agent_b's contract
++        sentinel.handoff(from_agent="agent_a", to_agent="agent_b", run_id=run_id, payload=output_a)
 +
-+        with run.step("personalize-agent", step_type="llm_call") as step:
-+            context, _ = sentinel.get_state(run_id, "leads")  # Shared State — read prior results
-+            step.set_input({"lead": best})
-+            email = personalize(best)
-+            step.set_output({"subject": email["subject"]})
++        with run.step("agent_b", step_type="llm_call") as step:
++            prior, _ = sentinel.get_state(run_id, "pipeline_state")  # Shared State — read prior output
++            step.set_input(output_a)
++            output_b = agent_b(output_a)
++            step.set_output(output_b)
 +
-+        # Contract + Replay — blocked here if email doesn't match the contract
-+        sentinel.handoff(from_agent="personalize-agent", to_agent="deliver-agent",
-+                         run_id=run_id, payload=email)
++        # Contract + Replay — blocked here if output_b doesn't match agent_c's contract
++        sentinel.handoff(from_agent="agent_b", to_agent="agent_c", run_id=run_id, payload=output_b)
 +
-+        with run.step("deliver-agent", step_type="notification") as step:
-+            step.set_input({"to_company": email["to_company"]})
-+            result = deliver(email)
++        with run.step("agent_c", step_type="llm_call") as step:
++            step.set_input(output_b)
++            result = agent_c(output_b)
 +            step.set_output(result)
 +
-+            # Shared State — record delivery outcome
-+            sentinel.propose_state_with_retry(run_id, "leads", lambda cur: {**(cur or {}), "delivery": result})
++            # Shared State — write final result
++            sentinel.propose_state_with_retry(run_id, "pipeline_state",
++                lambda cur: {**(cur or {}), "final_result": result})
 +
+-    output_a = agent_a(input_data)
+-    output_b = agent_b(output_a)
+-    result   = agent_c(output_b)
      return result
 ```
 
